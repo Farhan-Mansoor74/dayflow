@@ -1,0 +1,10 @@
+{
+  // Dayflow's view layer is a Claude Design template: inline styles contain
+  // {{ bindings }} (e.g. style="{{ heroBg }}"), which the built-in CSS/HTML
+  // language service flags as invalid CSS. They are not real errors — turn the
+  // embedded-style validation off so the editor stops reporting them.
+  "html.validate.styles": false,
+  "css.validate": false,
+  "less.validate": false,
+  "scss.validate": false
+}

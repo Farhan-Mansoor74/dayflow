@@ -1,0 +1,1703 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#E8694A">
+<link rel="apple-touch-icon" href="./assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Dayflow">
+<script src="./support.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.54.1/dist/apexcharts.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Nunito:wght@400;600;700;800;900&family=Outfit:wght@400;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: #efefef; color: #2E2A27; -webkit-font-smoothing: antialiased; }
+  input, button, textarea, select { font-family: inherit; }
+  input:focus, textarea:focus, select:focus { outline: none; }
+  * { scrollbar-width: none; -ms-overflow-style: none; }
+  *::-webkit-scrollbar { display: none; }
+  @keyframes screenIn { from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);} }
+  @keyframes taskIn { from{opacity:0;transform:translateY(-8px) scale(.97);}to{opacity:1;transform:translateY(0) scale(1);} }
+  @keyframes sheetIn { from{transform:translateY(110%);}to{transform:translateY(0);} }
+  @keyframes sheetOut { from{transform:translateY(0);}to{transform:translateY(110%);} }
+  @keyframes fadeIn { from{opacity:0;}to{opacity:1;} }
+  @keyframes fadeOut { from{opacity:1;}to{opacity:0;} }
+  @keyframes popA { 0%{transform:scale(1);}45%{transform:scale(1.22);}100%{transform:scale(1);} }
+  @keyframes popB { 0%{transform:scale(1);}45%{transform:scale(1.22);}100%{transform:scale(1);} }
+  @keyframes spin { to{transform:rotate(360deg);} }
+  @keyframes pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.16);} }
+  /* ---- Mobile responsive tweaks (inline styles overridden with !important) ---- */
+  @media (max-width: 560px) {
+    /* stack the two expense charts so neither is cramped / clips its legend */
+    .df-chart-grid { grid-template-columns: 1fr !important; }
+    /* shrink the picker wordmark so it can't collide with the Manage button */
+    .df-picker-logo { height: 1.9em !important; }
+    /* tighter 2-up profile grid with more compact cards */
+    .df-picker-grid { grid-template-columns: 1fr 1fr !important; gap: 12px !important; }
+    .df-picker-card { padding: 18px 12px 16px !important; gap: 11px !important; border-radius: 20px !important; }
+    .df-picker-avatar { width: 60px !important; height: 60px !important; font-size: 25px !important; }
+    .df-picker-name { font-size: 18px !important; }
+  }
+  @media (max-width: 380px) {
+    /* very narrow phones: drop the income/expense/balance stats to 2 columns */
+    .df-stat-grid { grid-template-columns: 1fr 1fr !important; }
+  }
+  /* Keep bottom-sheet content clear of the phone/tablet system navigation bar
+     (home indicator / browser toolbar). env() is 0 on desktop, so no change there. */
+  .df-sheet { padding-bottom: calc(22px + env(safe-area-inset-bottom)) !important; }
+</style>
+</helmet>
+
+<div style="min-height:100vh; width:100%; position:relative; overflow-x:hidden; font-family:{{ fontFamily }};">
+
+  <!-- ============ LOADING ============ -->
+  <sc-if value="{{ isLoading }}">
+  <div style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;">
+    <div style="width:46px; height:46px; border-radius:50%; border:4px solid #E4DAD2; border-top-color:{{ accent }}; animation:spin .8s linear infinite;"></div>
+    <div style="font-size:15px; font-weight:800; color:#9A8F88;">Loading your day…</div>
+  </div>
+  </sc-if>
+
+  <!-- ============ LOAD ERROR ============ -->
+  <sc-if value="{{ isLoadError }}">
+  <div style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; text-align:center;">
+    <div style="width:84px; height:84px; border-radius:24px; background:#FBE3D8; display:flex; align-items:center; justify-content:center; margin-bottom:20px;">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#D2553A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>
+    </div>
+    <h2 style="font-size:24px; font-weight:900; letter-spacing:-.02em; margin:0 0 8px;">Can't reach the server</h2>
+    <p style="font-size:15px; color:#9A8F88; margin:0 0 6px; max-width:420px;">{{ loadErrorMsg }}</p>
+    <p style="font-size:14px; color:#B6A99F; margin:0 0 24px; max-width:420px;">Make sure the API is running (run <strong>npm start</strong> in the server folder).</p>
+    <button onClick="{{ onRetry }}" style="padding:14px 28px; border:none; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer; color:#fff; background:{{ accent }};" style-hover="filter:brightness(1.05);">Retry</button>
+  </div>
+  </sc-if>
+
+  <!-- ============ ACCESS-KEY GATE ============ -->
+  <sc-if value="{{ isAuthGate }}">
+  <div style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; text-align:center;">
+    <div style="width:100%; max-width:380px;">
+      <img src="./assets/logo.svg" alt="Dayflow" style="height:30px; width:auto; display:block; margin:0 auto 22px;" />
+      <div style="width:72px; height:72px; border-radius:22px; background:{{ accent }}1A; display:flex; align-items:center; justify-content:center; margin:0 auto 18px;">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="{{ accent }}" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+      </div>
+      <h2 style="font-size:24px; font-weight:900; letter-spacing:-.02em; margin:0 0 8px;">Enter access key</h2>
+      <p style="font-size:15px; color:#9A8F88; margin:0 0 22px; line-height:1.45;">This device needs the household access key to use Dayflow. You'll only do this about once a month.</p>
+      <input value="{{ keyVal }}" onInput="{{ onKeyInput }}" onKeyDown="{{ onKeyDown }}" type="password" autocomplete="current-password" placeholder="Access key" style="width:100%; padding:16px 18px; font-size:17px; font-weight:600; border:1.5px solid {{ keyBorder }}; border-radius:16px; background:#fff; color:#2E2A27; text-align:center; margin-bottom:12px;" style-focus="border-color:{{ accent }};" />
+      <sc-if value="{{ keyHasError }}"><p style="font-size:14px; font-weight:700; color:#D2553A; margin:0 0 12px;">{{ keyError }}</p></sc-if>
+      <button onClick="{{ onKeySubmit }}" style="{{ keyBtnStyle }}" style-hover="filter:brightness(1.05);" style-active="transform:scale(.985);">{{ keyBtnLabel }}</button>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ ONBOARDING ============ -->
+  <sc-if value="{{ isOnboarding }}" hint-placeholder-val="{{ true }}">
+  <div style="animation:screenIn .3s cubic-bezier(.2,.8,.2,1) both; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:48px 32px;">
+    <div style="width:100%; max-width:480px;">
+      <div style="display:flex; align-items:center; margin-bottom:18px;">
+        <sc-if value="{{ obShowBack }}">
+          <button onClick="{{ onObBack }}" style="border:1px solid #E0D8D0; background:#fff; width:48px; height:48px; border-radius:16px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#2E2A27;" style-hover="background:#F5F0EC;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+          </button>
+        </sc-if>
+        <img src="./assets/logo.svg" alt="Dayflow" style="height:32px; width:auto; display:block; margin-left:auto;" />
+      </div>
+      <h1 style="font-size:40px; font-weight:900; letter-spacing:-.03em; margin:18px 0 8px; line-height:1.05;">{{ obHeading }}</h1>
+      <p style="font-size:18px; color:#9A8F88; margin:0 0 34px; line-height:1.45;">Add your name and email, then pick a color. Your email is used for reminders and login codes.</p>
+      <label style="font-size:14px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Name</label>
+      <input value="{{ obName }}" onInput="{{ onObNameInput }}" placeholder="e.g. Maya" style="width:100%; margin-top:10px; margin-bottom:18px; padding:16px 18px; font-size:18px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:16px; background:#fff; color:#2E2A27;" style-focus="border-color:{{ accent }};" />
+      <label style="font-size:14px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Email</label>
+      <input value="{{ obEmail }}" onInput="{{ onObEmailInput }}" placeholder="you@email.com" type="email" style="width:100%; margin-top:10px; margin-bottom:28px; padding:16px 18px; font-size:18px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:16px; background:#fff; color:#2E2A27;" style-focus="border-color:{{ accent }};" />
+      <label style="font-size:14px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Avatar color</label>
+      <div style="display:flex; flex-wrap:wrap; gap:14px; margin-top:14px; margin-bottom:38px;">
+        <sc-for list="{{ obColors }}" as="c" hint-placeholder-count="8">
+          <button onClick="{{ c.onSelect }}" style="{{ c.style }}" style-hover="transform:scale(1.08);">
+            <sc-if value="{{ c.active }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg></sc-if>
+          </button>
+        </sc-for>
+      </div>
+      <button onClick="{{ onObSubmit }}" style="{{ obSubmitStyle }}" style-hover="filter:brightness(1.05);" style-active="transform:scale(.985);">{{ obSubmitLabel }}</button>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ PROFILE PICKER ============ -->
+  <sc-if value="{{ isPicker }}" hint-placeholder-val="{{ true }}">
+  <div data-screen-label="Profile picker" style="animation:screenIn .3s cubic-bezier(.2,.8,.2,1) both; min-height:100vh; padding:40px clamp(24px,5vw,64px); background-image:linear-gradient(180deg,rgba(18,20,32,.45) 0%,rgba(18,20,32,.20) 28%,rgba(18,20,32,0) 52%),url('./assets/bg.png'); background-size:cover; background-position:center bottom; background-repeat:no-repeat;">
+    <div style="display:flex; align-items:center; justify-content:space-between; max-width:980px; margin:0 auto;">
+      <div style="display:flex; align-items:center; gap:9px; border-radius:14px; backdrop-filter:blur(8px);">
+        <img src="./assets/logo.svg" alt="Dayflow" class="df-picker-logo" style="height:3em; width:auto; display:block;" />
+      </div>
+      <button onClick="{{ onManage }}" style="border:none; background:rgba(255,255,255,.85); backdrop-filter:blur(8px); padding:11px 18px; border-radius:14px; font-size:15px; font-weight:800; color:#5A5250; cursor:pointer; display:flex; align-items:center; gap:8px;" style-hover="background:rgba(255,255,255,.95); color:#2E2A27;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        Manage
+      </button>
+    </div>
+    <div style="max-width:980px; margin:56px auto 0; padding-bottom:calc(104px + env(safe-area-inset-bottom));">
+      <p style="font-size:15px; font-weight:800; color:#fff; text-transform:uppercase; letter-spacing:.08em; margin:0 0 6px; text-shadow:0 1px 6px rgba(0,0,0,.3);">{{ dateLabel }}</p>
+      <h1 style="font-size:clamp(34px,5vw,46px); font-weight:900; letter-spacing:-.03em; margin:0 0 38px; color:#fff; text-shadow:0 2px 12px rgba(0,0,0,.25);">Who's planning today?</h1>
+      <div class="df-picker-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(218px,1fr)); gap:20px;">
+        <sc-for list="{{ pickerProfiles }}" as="p" hint-placeholder-count="3">
+          <button onClick="{{ p.onOpen }}" class="df-picker-card" style="position:relative; text-align:left; border:none; background:{{ p.color }}; border-radius:26px; padding:26px 24px 22px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:16px; box-shadow:0 4px 24px rgba(0,0,0,.22); transition:transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s;" style-hover="transform:translateY(-5px); box-shadow:0 16px 36px rgba(0,0,0,.3);" style-active="transform:translateY(-1px) scale(.99);">
+            <sc-if value="{{ p.locked }}"><div style="position:absolute; top:14px; right:14px; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.25); display:flex; align-items:center; justify-content:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></div></sc-if>
+            <div class="df-picker-avatar" style="width:84px; height:84px; border-radius:50%; background:rgba(255,255,255,.2); display:flex; align-items:center; justify-content:center; color:#fff; font-size:34px; font-weight:900;">{{ p.initial }}</div>
+            <div class="df-picker-name" style="font-size:21px; font-weight:900; letter-spacing:-.02em; color:#fff;">{{ p.name }}</div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div style="position:relative; width:30px; height:30px;">
+                <svg width="30" height="30" viewBox="0 0 30 30" style="transform:rotate(-90deg);">
+                  <circle cx="15" cy="15" r="12" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="4"></circle>
+                  <circle cx="15" cy="15" r="12" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-linecap="round" stroke-dasharray="{{ p.circ }}" stroke-dashoffset="{{ p.dash }}" style="transition:stroke-dashoffset .5s cubic-bezier(.2,.8,.2,1);"></circle>
+                </svg>
+              </div>
+              <span style="font-size:15px; font-weight:800; color:rgba(255,255,255,.85);">{{ p.fracLabel }}</span>
+            </div>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+    <div title="Farhan" style="position:fixed; bottom:calc(12px + env(safe-area-inset-bottom)); right:18px; z-index:40; width:58px; height:58px; display:flex; align-items:center; justify-content:center; overflow:hidden; pointer-events:none;">
+      <img src="./assets/farhan-logo.png" alt="Farhan" style="width:100%; height:100%; object-fit:contain; transform:scale(1.32);" />
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ MANAGE PROFILES ============ -->
+  <sc-if value="{{ isManage }}" hint-placeholder-val="{{ true }}">
+  <div data-screen-label="Manage profiles" style="animation:screenIn .3s cubic-bezier(.2,.8,.2,1) both; min-height:100vh; padding:36px clamp(20px,5vw,48px);">
+    <div style="max-width:560px; margin:0 auto;">
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:30px;">
+        <button onClick="{{ onManageBack }}" style="border:1px solid #E0D8D0; background:#fff; width:50px; height:50px; border-radius:16px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#2E2A27; flex:none;" style-hover="background:#F5F0EC;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <h1 style="font-size:28px; font-weight:900; letter-spacing:-.02em; margin:0;">Manage profiles</h1>
+      </div>
+      <ul style="list-style:none; margin:0 0 18px; padding:0; display:flex; flex-direction:column; gap:12px;">
+        <sc-for list="{{ manageProfiles }}" as="p" hint-placeholder-count="3">
+          <li>
+            <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px;">
+              <div style="display:flex; align-items:center; gap:15px;">
+                <div style="width:50px; height:50px; border-radius:50%; background:{{ p.color }}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:20px; font-weight:900; flex:none;">{{ p.initial }}</div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:18px; font-weight:900; letter-spacing:-.02em;">{{ p.name }}</div>
+                  <div style="font-size:14px; font-weight:700; color:#9A8F88;">{{ p.countLabel }}</div>
+                </div>
+                <button onClick="{{ p.onFace }}" title="Face unlock" style="{{ p.faceBtnStyle }}" style-hover="filter:brightness(.97);">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"></path><path d="M16 4h2a2 2 0 0 1 2 2v2"></path><path d="M20 16v2a2 2 0 0 1-2 2h-2"></path><path d="M8 20H6a2 2 0 0 1-2-2v-2"></path><path d="M9 10h.01"></path><path d="M15 10h.01"></path><path d="M9.5 15a3.5 3.5 0 0 0 5 0"></path></svg>
+                </button>
+                <button onClick="{{ p.onDelete }}" style="width:42px; height:42px; border:none; background:#ECEAE7; border-radius:13px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#A89E96; flex:none;" style-hover="background:#FBE9E4; color:#D2553A;">
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"></path></svg>
+                </button>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px; margin-top:14px; padding-top:14px; border-top:1px solid #F0EAE4;">
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:14px; font-weight:800; color:#2E2A27;">Turn off authentication</div>
+                  <div style="font-size:12.5px; font-weight:600; color:#9A8F88; margin-top:1px;">{{ p.authStatusLabel }}</div>
+                </div>
+                <button onClick="{{ p.onToggleAuth }}" title="Turn off authentication" style="{{ p.authToggleTrackStyle }}">
+                  <span style="{{ p.authToggleKnobStyle }}"></span>
+                </button>
+              </div>
+            </div>
+          </li>
+        </sc-for>
+      </ul>
+      <button onClick="{{ onAddProfile }}" style="width:100%; border:2px dashed #D4CDC6; background:transparent; color:#7C7068; padding:18px; border-radius:20px; font-size:16px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;" style-hover="border-color:{{ accent }}; color:{{ accent }};">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+        Add profile
+      </button>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ PROFILE SCREEN (tabs: tasks / reminders / expenses / vault) ============ -->
+  <sc-if value="{{ isProfileScreen }}" hint-placeholder-val="{{ true }}">
+  <div data-screen-label="Profile" style="animation:screenIn .3s cubic-bezier(.2,.8,.2,1) both; min-height:100vh; padding-bottom:100px;">
+
+    <!-- shared header -->
+    <div style="padding:28px clamp(20px,5vw,48px) 0; max-width:760px; margin:0 auto;">
+      <div style="display:flex; align-items:center; gap:14px; margin-bottom:18px;">
+        <button onClick="{{ onBack }}" style="border:1px solid #E0D8D0; background:#fff; width:48px; height:48px; border-radius:14px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#2E2A27; flex:none;" style-hover="background:#F5F0EC;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
+          <div style="width:44px; height:44px; border-radius:50%; background:{{ activeColor }}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; font-weight:900; flex:none;">{{ activeInitial }}</div>
+          <div style="min-width:0;">
+            <div style="font-size:20px; font-weight:900; letter-spacing:-.02em; line-height:1.1;">{{ activeName }}</div>
+            <div style="font-size:13px; font-weight:700; color:#9A8F88; white-space:nowrap;">{{ dateLabel }}</div>
+          </div>
+        </div>
+      </div>
+      <!-- tab bar -->
+      <div style="display:flex; gap:4px; background:#E2DDD9; border-radius:18px; padding:4px;">
+        <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="4">
+          <button onClick="{{ tab.onClick }}" style="{{ tab.style }}">
+            <span style="display:flex; align-items:center; justify-content:center; gap:5px;">{{ tab.icon }}{{ tab.label }}<sc-if value="{{ tab.hasBadge }}"><span style="{{ tab.badgeStyle }}">{{ tab.badge }}</span></sc-if></span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- ── TASKS TAB ── -->
+    <sc-if value="{{ isTasks }}" hint-placeholder-val="{{ true }}">
+    <div style="padding:20px clamp(20px,5vw,48px) 0; max-width:760px; margin:0 auto;">
+      <!-- hero progress card -->
+      <div style="position:relative; overflow:hidden; border-radius:26px; padding:24px 26px; margin-bottom:22px; background:{{ heroBg }}; box-shadow:0 12px 30px {{ heroShadow }};">
+        <div style="position:absolute; right:-34px; top:-46px; width:170px; height:170px; border-radius:50%; background:rgba(255,255,255,.13);"></div>
+        <div style="position:absolute; right:70px; bottom:-64px; width:120px; height:120px; border-radius:50%; background:rgba(255,255,255,.09);"></div>
+        <div style="position:relative; display:flex; align-items:center; gap:22px;">
+          <div style="position:relative; width:86px; height:86px; flex:none;">
+            <svg width="86" height="86" viewBox="0 0 86 86" style="transform:rotate(-90deg);">
+              <circle cx="43" cy="43" r="37" fill="none" stroke="rgba(255,255,255,.28)" stroke-width="8"></circle>
+              <circle cx="43" cy="43" r="37" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" stroke-dasharray="{{ progCirc }}" stroke-dashoffset="{{ progDash }}" style="transition:stroke-dashoffset .6s cubic-bezier(.2,.8,.2,1);"></circle>
+            </svg>
+            <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:19px; font-weight:900; color:#fff;">{{ progPct }}</div>
+          </div>
+          <div style="color:#fff; min-width:0;">
+            <div style="font-size:12px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; opacity:.85;">{{ heroGreeting }}</div>
+            <div style="display:inline-block; white-space:nowrap; font-size:27px; font-weight:900; letter-spacing:-.02em; margin-top:2px; animation:{{ progAnim }} .35s cubic-bezier(.34,1.56,.64,1);">{{ heroHeadline }}</div>
+            <div style="font-size:14px; font-weight:700; opacity:.92; margin-top:3px;">{{ progFrac }} done · {{ progSub }}</div>
+          </div>
+        </div>
+      </div>
+      <!-- task list -->
+      <sc-if value="{{ hasTasks }}" hint-placeholder-val="{{ true }}">
+      <ul ref="{{ setListRef }}" style="list-style:none; margin:0; padding:0;">
+        <sc-for list="{{ tasks }}" as="t" hint-placeholder-count="4">
+          <li style="{{ t.outerStyle }}">
+            <div style="display:flex; align-items:center; gap:10px; background:{{ t.cardBg }}; border:1px solid #E8DFD8; border-radius:20px; padding:13px 12px 13px 0; box-shadow:{{ t.shadow }}; overflow:hidden;">
+              <div style="width:5px; align-self:stretch; border-radius:0 5px 5px 0; background:{{ t.accentColor }}; flex:none; opacity:{{ t.barOpacity }}; transition:opacity .3s;"></div>
+              <div onPointerDown="{{ t.onDragStart }}" style="touch-action:none; cursor:grab; padding:8px 2px; color:#D2C1B6; flex:none; display:flex;" style-hover="color:#B69E90;">
+                <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor"><circle cx="3" cy="4" r="1.7"></circle><circle cx="9" cy="4" r="1.7"></circle><circle cx="3" cy="10" r="1.7"></circle><circle cx="9" cy="10" r="1.7"></circle><circle cx="3" cy="16" r="1.7"></circle><circle cx="9" cy="16" r="1.7"></circle></svg>
+              </div>
+              <button onClick="{{ t.onToggle }}" style="width:44px; height:44px; border:none; background:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;">
+                <span style="{{ t.checkStyle }}">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" style="{{ t.checkSvgStyle }}"><path d="M20 6L9 17l-5-5"></path></svg>
+                </span>
+              </button>
+              <div style="flex:1; min-width:0;">
+                <div style="position:relative; width:fit-content; max-width:100%;">
+                  <span style="{{ t.titleStyle }}">{{ t.title }}</span>
+                  <span style="{{ t.strikeStyle }}"></span>
+                </div>
+                <div style="display:flex; align-items:center; gap:7px; margin-top:6px; flex-wrap:wrap;">
+                  <sc-if value="{{ t.hasTime }}"><span style="{{ t.timeChipStyle }}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>{{ t.time }}</span></sc-if>
+                  <span style="{{ t.badgeStyle }}">{{ t.typeLabel }}</span>
+                  <sc-if value="{{ t.showDays }}"><span style="font-size:12px; font-weight:700; color:#9A8F88;">{{ t.daysLabel }}</span></sc-if>
+                </div>
+              </div>
+              <button onClick="{{ t.onEdit }}" style="width:36px; height:36px; border:none; background:none; border-radius:10px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#C9B7AB; flex:none;" style-hover="background:#F5F0EC; color:#7C7068;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg>
+              </button>
+              <button onClick="{{ t.onDelete }}" style="width:36px; height:36px; border:none; background:none; border-radius:10px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#C9B7AB; flex:none;" style-hover="background:#FBE9E4; color:#D2553A;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"></path></svg>
+              </button>
+            </div>
+          </li>
+        </sc-for>
+      </ul>
+      </sc-if>
+      <sc-if value="{{ isEmpty }}">
+      <div style="text-align:center; padding:50px 20px;">
+        <div style="width:90px; height:90px; margin:0 auto 18px; border-radius:24px; background:#E4E0DC; display:flex; align-items:center; justify-content:center;">
+          <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#C2BAB4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+        </div>
+        <h3 style="font-size:21px; font-weight:900; margin:0 0 6px;">No tasks today</h3>
+        <p style="font-size:15px; color:#9A8F88; margin:0;">Tap + to add the first task.</p>
+      </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ── REMINDERS TAB ── -->
+    <sc-if value="{{ isReminders }}" hint-placeholder-val="{{ true }}">
+    <div style="padding:20px clamp(20px,5vw,48px) 0; max-width:760px; margin:0 auto;">
+      <!-- notification banner -->
+      <sc-if value="{{ showNotifBanner }}">
+      <button onClick="{{ onRequestNotif }}" style="width:100%; margin-bottom:16px; border:none; background:#FFF4E0; color:#B45309; padding:13px 18px; border-radius:16px; font-size:14px; font-weight:800; cursor:pointer; display:flex; align-items:center; gap:10px; text-align:left;" style-hover="background:#FEEFC3;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+        Enable notifications to get in-app alerts
+      </button>
+      </sc-if>
+      <!-- reminder list -->
+      <sc-if value="{{ hasReminders }}">
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <sc-for list="{{ reminders }}" as="r" hint-placeholder-count="2">
+          <div style="{{ r.outerStyle }}">
+            <div style="display:flex; align-items:flex-start; gap:12px; background:#fff; border:1px solid #E0D8D0; border-radius:18px; padding:16px 14px;">
+              <div style="width:40px; height:40px; border-radius:13px; background:{{ activeColor }}; display:flex; align-items:center; justify-content:center; flex:none; margin-top:1px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+              </div>
+              <div style="flex:1; min-width:0;">
+                <div style="{{ r.titleStyle }}">{{ r.title }}</div>
+                <div style="font-size:13px; font-weight:700; color:#9A8F88; margin-top:3px;">{{ r.dueLabel }}</div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:7px; flex-wrap:wrap;">
+                  <span style="{{ r.statusStyle }}">{{ r.status }}</span>
+                  <span style="font-size:12px; font-weight:700; color:#9A8F88; display:flex; align-items:center; gap:4px;">
+                    <sc-if value="{{ r.isNotification }}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg></sc-if>
+                    <sc-if value="{{ r.isEmail }}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></sc-if>
+                    {{ r.methodLabel }}
+                  </span>
+                </div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; flex:none;">
+                <button onClick="{{ r.onDone }}" style="{{ r.doneStyle }}" style-hover="opacity:.85;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>
+                </button>
+                <button onClick="{{ r.onEdit }}" style="width:34px; height:34px; border:none; background:#ECEAE7; border-radius:10px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#9A8F88;" style-hover="background:#E4E0DC; color:#5A5250;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg>
+                </button>
+                <button onClick="{{ r.onDelete }}" style="width:34px; height:34px; border:none; background:#ECEAE7; border-radius:10px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#9A8F88;" style-hover="background:#FBE9E4; color:#D2553A;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"></path></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ isRemindersEmpty }}">
+      <div style="text-align:center; padding:50px 20px;">
+        <div style="width:90px; height:90px; margin:0 auto 18px; border-radius:24px; background:#E4E0DC; display:flex; align-items:center; justify-content:center;">
+          <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#C2BAB4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+        </div>
+        <h3 style="font-size:21px; font-weight:900; margin:0 0 6px;">No reminders</h3>
+        <p style="font-size:15px; color:#9A8F88; margin:0;">Tap + to set a reminder.</p>
+      </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ── EXPENSES TAB ── -->
+    <sc-if value="{{ isExpenses }}" hint-placeholder-val="{{ true }}">
+    <div style="padding:20px clamp(20px,5vw,48px) 0; max-width:760px; margin:0 auto;">
+
+      <!-- stat cards -->
+      <div class="df-stat-grid" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:20px;">
+        <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px;">
+          <div style="font-size:12px; font-weight:800; color:#5B9A8B; text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px;">Income</div>
+          <div style="font-size:22px; font-weight:900; letter-spacing:-.02em; color:#2E2A27;">{{ statIncome }}</div>
+          <div style="font-size:12px; font-weight:700; color:#9A8F88; margin-top:2px;">this month</div>
+        </div>
+        <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px;">
+          <div style="font-size:12px; font-weight:800; color:#E8694A; text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px;">Expenses</div>
+          <div style="font-size:22px; font-weight:900; letter-spacing:-.02em; color:#2E2A27;">{{ statExpense }}</div>
+          <div style="font-size:12px; font-weight:700; color:#9A8F88; margin-top:2px;">this month</div>
+        </div>
+        <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px;">
+          <div style="font-size:12px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px;">Balance</div>
+          <div style="{{ netStyle }}">{{ statNet }}</div>
+          <div style="font-size:12px; font-weight:700; color:#9A8F88; margin-top:2px;">{{ netLabel }}</div>
+        </div>
+      </div>
+
+      <!-- charts row -->
+      <sc-if value="{{ hasExpenseData }}">
+      <div class="df-chart-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:20px;">
+
+        <!-- spending trend (ApexCharts area) -->
+        <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:18px 20px 8px;">
+          <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px;">
+            <div style="font-size:13px; font-weight:900; color:#2E2A27; letter-spacing:-.01em;">Spending Trend</div>
+            <div style="font-size:11px; font-weight:700; color:#9A8F88;">last 30 days</div>
+          </div>
+          <div ref="{{ setSpendChartRef }}" style="width:100%; min-height:172px;"></div>
+        </div>
+
+        <!-- category donut (ApexCharts, interactive: hover tooltips + clickable legend) -->
+        <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:18px 20px 10px;">
+          <div style="font-size:13px; font-weight:900; color:#2E2A27; margin-bottom:2px; letter-spacing:-.01em;">Spending by Category</div>
+          <div ref="{{ setDonutChartRef }}" style="width:100%; min-height:236px;"></div>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- transactions -->
+      <div style="font-size:13px; font-weight:900; color:#7C7068; text-transform:uppercase; letter-spacing:.06em; margin-bottom:12px;">Transactions</div>
+      <sc-if value="{{ hasExpenses }}">
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <sc-for list="{{ expenseItems }}" as="e" hint-placeholder-count="3">
+          <div style="{{ e.outerStyle }}">
+            <div style="display:flex; align-items:center; gap:12px; background:#fff; border:1px solid #E0D8D0; border-radius:16px; padding:13px 14px;">
+              <div style="width:38px; height:38px; border-radius:12px; background:{{ e.catColor }}22; display:flex; align-items:center; justify-content:center; flex:none;">
+                <div style="width:10px; height:10px; border-radius:50%; background:{{ e.catColor }};"></div>
+              </div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:15px; font-weight:800; color:#2E2A27; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ e.title }}</div>
+                <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px 7px; margin-top:3px;">
+                  <span style="{{ e.catBadge }}">{{ e.catLabel }}</span>
+                  <span style="font-size:12px; font-weight:600; color:#9A8F88; white-space:nowrap;">{{ e.dateDisplay }}</span>
+                </div>
+              </div>
+              <div style="{{ e.amountStyle }}">{{ e.amountDisplay }}</div>
+              <button onClick="{{ e.onDelete }}" style="width:34px; height:34px; border:none; background:none; border-radius:10px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#C9B7AB; flex:none;" style-hover="background:#FBE9E4; color:#D2553A;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"></path></svg>
+              </button>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ isExpensesEmpty }}">
+      <div style="text-align:center; padding:40px 20px;">
+        <div style="width:80px; height:80px; margin:0 auto 16px; border-radius:22px; background:#E4E0DC; display:flex; align-items:center; justify-content:center;">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#C2BAB4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+        </div>
+        <h3 style="font-size:20px; font-weight:900; margin:0 0 5px;">No transactions yet</h3>
+        <p style="font-size:14px; color:#9A8F88; margin:0;">Tap + to log income or an expense.</p>
+      </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ── VAULT TAB ── -->
+    <sc-if value="{{ isVault }}" hint-placeholder-val="{{ true }}">
+    <div style="padding:20px clamp(20px,5vw,48px) 0; max-width:760px; margin:0 auto;">
+      <sc-if value="{{ hasVaultItems }}">
+      <p style="font-size:13px; font-weight:800; color:#9A8F88; text-transform:uppercase; letter-spacing:.06em; margin:0 0 16px;">{{ vaultCountLabel }}</p>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px;">
+        <sc-for list="{{ vaultItems }}" as="v" hint-placeholder-count="2">
+          <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:18px; animation:{{ v.anim }};">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+              <div style="display:flex; align-items:center; gap:9px; min-width:0;">
+                <div style="width:36px; height:36px; border-radius:11px; background:{{ activeColor }}; display:flex; align-items:center; justify-content:center; flex:none;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                </div>
+                <span style="font-size:16px; font-weight:900; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ v.label }}</span>
+              </div>
+              <div style="display:flex; gap:4px; flex:none; margin-left:8px;">
+                <button onClick="{{ v.onEdit }}" style="width:32px; height:32px; border:none; background:#ECEAE7; border-radius:9px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#9A8F88;" style-hover="background:#E4E0DC; color:#5A5250;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg>
+                </button>
+                <button onClick="{{ v.onDelete }}" style="width:32px; height:32px; border:none; background:#ECEAE7; border-radius:9px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#9A8F88;" style-hover="background:#FBE9E4; color:#D2553A;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"></path></svg>
+                </button>
+              </div>
+            </div>
+            <sc-if value="{{ v.hasUser }}">
+            <div style="margin-bottom:8px; padding:10px 13px; background:#F5F2F0; border-radius:12px;">
+              <div style="font-size:11px; font-weight:800; color:#A8A09A; text-transform:uppercase; letter-spacing:.07em; margin-bottom:3px;">Username</div>
+              <div style="font-size:14px; font-weight:700; color:#2E2A27; word-break:break-all;">{{ v.username }}</div>
+            </div>
+            </sc-if>
+            <div style="padding:10px 13px; background:#F5F2F0; border-radius:12px; display:flex; align-items:center; gap:8px;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:11px; font-weight:800; color:#A8A09A; text-transform:uppercase; letter-spacing:.07em; margin-bottom:3px;">Password</div>
+                <div style="{{ v.passStyle }}">{{ v.passDisplay }}</div>
+              </div>
+              <button onClick="{{ v.onReveal }}" style="width:32px; height:32px; border:none; background:#E4E0DC; border-radius:9px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; color:#7C7068;" style-hover="background:#D8D4D0;">
+                <sc-if value="{{ v.revealed }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg></sc-if>
+                <sc-if value="{{ v.notRevealed }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></sc-if>
+              </button>
+            </div>
+            <sc-if value="{{ v.hasNotes }}">
+            <div style="margin-top:8px; padding:10px 13px; background:#F5F2F0; border-radius:12px;">
+              <div style="font-size:11px; font-weight:800; color:#A8A09A; text-transform:uppercase; letter-spacing:.07em; margin-bottom:3px;">Notes</div>
+              <div style="font-size:13px; font-weight:600; color:#5A5250; line-height:1.5;">{{ v.notes }}</div>
+            </div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ isVaultEmpty }}">
+      <div style="text-align:center; padding:50px 20px;">
+        <div style="width:90px; height:90px; margin:0 auto 18px; border-radius:24px; background:#E4E0DC; display:flex; align-items:center; justify-content:center;">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#C2BAB4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+        </div>
+        <h3 style="font-size:21px; font-weight:900; margin:0 0 6px;">Nothing stored yet</h3>
+        <p style="font-size:15px; color:#9A8F88; margin:0;">Tap + to add credentials.</p>
+      </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+  </div>
+  </sc-if>
+
+  <!-- FAB — rendered at root (outside the animated/transformed screen) so position:fixed anchors to the viewport corner -->
+  <sc-if value="{{ isProfileScreen }}">
+  <button onClick="{{ onFABClick }}" style="position:fixed; right:clamp(20px,4vw,40px); bottom:calc(clamp(20px,4vw,40px) + env(safe-area-inset-bottom)); z-index:150; width:64px; height:64px; border-radius:50%; border:none; background:{{ fabColor }}; color:#fff; cursor:pointer; box-shadow:0 8px 24px rgba(0,0,0,.22); display:flex; align-items:center; justify-content:center; transition:transform .18s cubic-bezier(.34,1.56,.64,1);" style-hover="transform:scale(1.1) rotate(90deg);" style-active="transform:scale(.96);">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+  </button>
+  </sc-if>
+
+  <!-- ============ TASK MODAL ============ -->
+  <sc-if value="{{ modalOpen }}">
+  <div style="position:fixed; inset:0; z-index:200; display:flex; align-items:flex-end; justify-content:center;">
+    <div onClick="{{ onCloseModal }}" style="position:absolute; inset:0; background:rgba(48,32,24,.4); animation:{{ backdropAnim }} .26s ease both;"></div>
+    <div class="df-sheet" style="position:relative; width:100%; max-width:560px; background:#fff; border-radius:30px 30px 0 0; padding:18px 24px 22px; box-shadow:0 -10px 40px rgba(60,30,15,.18); animation:{{ sheetAnim }};">
+      <div style="width:44px; height:5px; border-radius:3px; background:#E0D8D0; margin:0 auto 14px;"></div>
+      <h2 style="font-size:22px; font-weight:900; letter-spacing:-.02em; margin:0 0 14px;">{{ modalTitle }}</h2>
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Task title</label>
+      <input value="{{ fTitle }}" onInput="{{ onTitleInput }}" placeholder="What needs doing?" style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ accent }}; background:#fff;" />
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Time <span style="font-weight:700; text-transform:none; color:#B6A99F;">(optional)</span></label>
+      <input value="{{ fTime }}" onInput="{{ onTimeInput }}" type="time" style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ accent }}; background:#fff;" />
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Repeat</label>
+      <div style="display:flex; gap:6px; margin-top:7px; margin-bottom:12px; background:#EDE8E3; border-radius:15px; padding:4px;">
+        <sc-for list="{{ typeOptions }}" as="o" hint-placeholder-count="3">
+          <button onClick="{{ o.onSelect }}" style="{{ o.style }}">{{ o.label }}</button>
+        </sc-for>
+      </div>
+      <sc-if value="{{ isWeekly }}">
+      <div style="margin-bottom:12px; animation:taskIn .25s ease both;">
+        <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">On these days</label>
+        <div style="display:flex; gap:7px; margin-top:8px;">
+          <sc-for list="{{ dayOptions }}" as="d" hint-placeholder-count="7">
+            <button onClick="{{ d.onToggle }}" style="{{ d.style }}">{{ d.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+      </sc-if>
+      <div style="display:flex; gap:12px; margin-top:4px;">
+        <button onClick="{{ onCloseModal }}" style="flex:none; padding:14px 20px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Cancel</button>
+        <button onClick="{{ onSaveTask }}" style="{{ saveStyle }}" style-hover="filter:brightness(1.05);" style-active="transform:scale(.99);">{{ saveLabel }}</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ REMINDER MODAL ============ -->
+  <sc-if value="{{ reminderModalOpen }}">
+  <div style="position:fixed; inset:0; z-index:200; display:flex; align-items:flex-end; justify-content:center;">
+    <div onClick="{{ onCloseReminderModal }}" style="position:absolute; inset:0; background:rgba(48,32,24,.4); animation:{{ rBackdropAnim }} .26s ease both;"></div>
+    <div class="df-sheet" style="position:relative; width:100%; max-width:560px; background:#fff; border-radius:30px 30px 0 0; padding:18px 24px 24px; box-shadow:0 -10px 40px rgba(60,30,15,.18); animation:{{ rSheetAnim }};">
+      <div style="width:44px; height:5px; border-radius:3px; background:#E0D8D0; margin:0 auto 14px;"></div>
+      <h2 style="font-size:22px; font-weight:900; letter-spacing:-.02em; margin:0 0 14px;">{{ reminderModalTitle }}</h2>
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Title</label>
+      <input value="{{ fRTitle }}" onInput="{{ onRTitleInput }}" placeholder="e.g. Pay rent, Doctor appointment" style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Date &amp; Time</label>
+      <input value="{{ fRDatetime }}" onInput="{{ onRDatetimeInput }}" type="datetime-local" style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Alert method</label>
+      <div style="display:flex; gap:6px; margin-top:7px; margin-bottom:12px; background:#EDE8E3; border-radius:15px; padding:4px;">
+        <sc-for list="{{ methodOptions }}" as="mo" hint-placeholder-count="2">
+          <button onClick="{{ mo.onSelect }}" style="{{ mo.style }}">{{ mo.label }}</button>
+        </sc-for>
+      </div>
+      <sc-if value="{{ isEmailMethod }}">
+      <div style="animation:taskIn .2s ease both; margin-bottom:12px;">
+        <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Email address</label>
+        <input value="{{ fREmail }}" onInput="{{ onREmailInput }}" placeholder="your@email.com" type="email" style="width:100%; margin-top:7px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+      </div>
+      </sc-if>
+      <div style="display:flex; gap:12px; margin-top:4px;">
+        <button onClick="{{ onCloseReminderModal }}" style="flex:none; padding:14px 20px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Cancel</button>
+        <button onClick="{{ onSaveReminder }}" style="{{ rSaveStyle }}" style-hover="filter:brightness(1.05);" style-active="transform:scale(.99);">{{ rSaveLabel }}</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ EXPENSE MODAL ============ -->
+  <sc-if value="{{ expenseModalOpen }}">
+  <div style="position:fixed; inset:0; z-index:200; display:flex; align-items:flex-end; justify-content:center;">
+    <div onClick="{{ onCloseExpenseModal }}" style="position:absolute; inset:0; background:rgba(48,32,24,.4); animation:{{ eBackdropAnim }} .26s ease both;"></div>
+    <div class="df-sheet" style="position:relative; width:100%; max-width:560px; background:#fff; border-radius:30px 30px 0 0; padding:18px 24px 24px; box-shadow:0 -10px 40px rgba(60,30,15,.18); animation:{{ eSheetAnim }};">
+      <div style="width:44px; height:5px; border-radius:3px; background:#E0D8D0; margin:0 auto 14px;"></div>
+      <h2 style="font-size:22px; font-weight:900; letter-spacing:-.02em; margin:0 0 14px;">{{ expenseModalTitle }}</h2>
+      <!-- type toggle -->
+      <div style="display:flex; gap:6px; margin-bottom:14px; background:#EDE8E3; border-radius:15px; padding:4px;">
+        <sc-for list="{{ expTypeOptions }}" as="et" hint-placeholder-count="2">
+          <button onClick="{{ et.onSelect }}" style="{{ et.style }}">{{ et.label }}</button>
+        </sc-for>
+      </div>
+      <!-- voice input -->
+      <sc-if value="{{ voiceSupported }}">
+      <button onClick="{{ onVoiceExpense }}" style="{{ voiceBtnStyle }}" style-hover="filter:brightness(.98);">
+        <span style="{{ voiceMicStyle }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v4"></path></svg></span>
+        <span>{{ voiceBtnLabel }}</span>
+      </button>
+      </sc-if>
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Description</label>
+      <input value="{{ fETitle }}" onInput="{{ onETitleInput }}" placeholder="e.g. Groceries, Salary" style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+      <div style="display:flex; gap:10px; margin-bottom:12px;">
+        <div style="flex:1;">
+          <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Amount</label>
+          <input value="{{ fEAmount }}" onInput="{{ onEAmountInput }}" placeholder="0.00" type="number" min="0" step="0.01" style="width:100%; margin-top:7px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Date</label>
+          <input value="{{ fEDate }}" onInput="{{ onEDateInput }}" type="date" style="width:100%; margin-top:7px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+        </div>
+      </div>
+      <sc-if value="{{ isExpenseType }}">
+      <div style="animation:taskIn .2s ease both; margin-bottom:12px;">
+        <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Category</label>
+        <div style="display:flex; flex-wrap:wrap; gap:7px; margin-top:8px;">
+          <sc-for list="{{ catOptions }}" as="cat" hint-placeholder-count="8">
+            <button onClick="{{ cat.onSelect }}" style="{{ cat.style }}">{{ cat.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+      </sc-if>
+      <div style="display:flex; gap:12px; margin-top:4px;">
+        <button onClick="{{ onCloseExpenseModal }}" style="flex:none; padding:14px 20px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Cancel</button>
+        <button onClick="{{ onSaveExpense }}" style="{{ eSaveStyle }}" style-hover="filter:brightness(1.05);" style-active="transform:scale(.99);">{{ eSaveLabel }}</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ VAULT MODAL ============ -->
+  <sc-if value="{{ vaultModalOpen }}">
+  <div style="position:fixed; inset:0; z-index:200; display:flex; align-items:flex-end; justify-content:center;">
+    <div onClick="{{ onCloseVaultModal }}" style="position:absolute; inset:0; background:rgba(28,22,18,.45); animation:{{ vaultBackdropAnim }} .26s ease both;"></div>
+    <div class="df-sheet" style="position:relative; width:100%; max-width:560px; background:#fff; border-radius:30px 30px 0 0; padding:18px 24px 24px; box-shadow:0 -10px 40px rgba(30,20,10,.2); animation:{{ vaultSheetAnim }};">
+      <div style="width:44px; height:5px; border-radius:3px; background:#E0D8D0; margin:0 auto 14px;"></div>
+      <h2 style="font-size:22px; font-weight:900; letter-spacing:-.02em; margin:0 0 14px;">{{ vaultModalTitle }}</h2>
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Label</label>
+      <input value="{{ fVaultLabel }}" onInput="{{ onVaultLabelInput }}" placeholder="e.g. Netflix, WiFi, Bank PIN" style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Username / Email <span style="font-weight:700; text-transform:none; color:#B6A99F;">(optional)</span></label>
+      <input value="{{ fVaultUser }}" onInput="{{ onVaultUserInput }}" placeholder="username or email" style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Password / PIN</label>
+      <div style="position:relative; margin-top:7px; margin-bottom:12px;">
+        <input value="{{ fVaultPass }}" onInput="{{ onVaultPassInput }}" type="{{ vaultPassInputType }}" placeholder="••••••••" style="width:100%; padding:11px 50px 11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27; font-family:monospace;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+        <button onClick="{{ onToggleVaultPass }}" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); width:34px; height:34px; border:none; background:none; cursor:pointer; color:#9A8F88; display:flex; align-items:center; justify-content:center; border-radius:8px;" style-hover="background:#F0EDEA;">
+          <sc-if value="{{ showVaultPass }}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg></sc-if>
+          <sc-if value="{{ hideVaultPass }}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></sc-if>
+        </button>
+      </div>
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Notes <span style="font-weight:700; text-transform:none; color:#B6A99F;">(optional)</span></label>
+      <textarea onInput="{{ onVaultNotesInput }}" placeholder="Any extra details..." style="width:100%; margin-top:7px; margin-bottom:12px; padding:11px 15px; font-size:15px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27; resize:none; height:64px; line-height:1.5;" style-focus="border-color:{{ activeColor }}; background:#fff;">{{ fVaultNotes }}</textarea>
+      <div style="display:flex; gap:12px;">
+        <button onClick="{{ onCloseVaultModal }}" style="flex:none; padding:14px 20px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Cancel</button>
+        <button onClick="{{ onSaveVault }}" style="{{ vaultSaveStyle }}" style-hover="filter:brightness(1.05);" style-active="transform:scale(.99);">{{ vaultSaveLabel }}</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ FACE ENROLL ============ -->
+  <sc-if value="{{ enrollOpen }}">
+  <div style="position:fixed; inset:0; z-index:250; display:flex; align-items:center; justify-content:center; padding:24px;">
+    <div onClick="{{ onEnrollClose }}" style="position:absolute; inset:0; background:rgba(28,22,18,.5); animation:fadeIn .2s ease both;"></div>
+    <div style="position:relative; width:100%; max-width:420px; background:#fff; border-radius:26px; padding:24px; box-shadow:0 20px 50px rgba(30,20,10,.3); animation:taskIn .24s cubic-bezier(.2,.9,.3,1.15) both; text-align:center;">
+      <h2 style="font-size:21px; font-weight:900; letter-spacing:-.02em; margin:0 0 4px;">Set up Face Unlock</h2>
+      <p style="font-size:14px; color:#9A8F88; margin:0 0 16px;">for {{ enrollName }}</p>
+      <div style="position:relative; width:240px; height:240px; margin:0 auto 14px; border-radius:50%; overflow:hidden; background:#1a1410; box-shadow:inset 0 0 0 3px #ECE0D8;">
+        <video ref="{{ setEnrollVideo }}" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; transform:scaleX(-1);"></video>
+      </div>
+      <p style="font-size:13px; font-weight:700; color:#7C7068; min-height:34px; margin:0 0 14px; line-height:1.4;">{{ enrollStatus }}</p>
+      <div style="display:flex; gap:10px;">
+        <button onClick="{{ onEnrollClose }}" style="flex:none; padding:13px 18px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:15px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Cancel</button>
+        <sc-if value="{{ enrollFaceEnrolled }}">
+          <button onClick="{{ onEnrollRemove }}" style="flex:none; padding:13px 16px; border:none; background:#FBE9E4; color:#D2553A; border-radius:15px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="filter:brightness(.98);">Remove</button>
+        </sc-if>
+        <button onClick="{{ onEnrollCapture }}" style="flex:1; padding:13px; border:none; background:{{ accent }}; color:#fff; border-radius:15px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="filter:brightness(1.05);">{{ enrollCaptureLabel }}</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ UNLOCK (gate access) ============ -->
+  <sc-if value="{{ unlockOpen }}">
+  <div style="position:fixed; inset:0; z-index:250; display:flex; align-items:center; justify-content:center; padding:24px;">
+    <div onClick="{{ onCloseUnlock }}" style="position:absolute; inset:0; background:rgba(28,22,18,.55); animation:fadeIn .2s ease both;"></div>
+    <div style="position:relative; width:100%; max-width:400px; background:#fff; border-radius:26px; padding:26px 24px; box-shadow:0 20px 50px rgba(30,20,10,.3); animation:taskIn .24s cubic-bezier(.2,.9,.3,1.15) both; text-align:center;">
+      <div style="width:64px; height:64px; border-radius:50%; background:{{ unlockColor }}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:26px; font-weight:900; margin:0 auto 12px;">{{ unlockInitial }}</div>
+      <h2 style="font-size:22px; font-weight:900; letter-spacing:-.02em; margin:0 0 4px;">{{ unlockTitle }}</h2>
+
+      <sc-if value="{{ unlockIsChoose }}">
+      <p style="font-size:14px; color:#9A8F88; margin:6px 0 20px;">{{ unlockSubtitle }}</p>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <sc-if value="{{ unlockCanFace }}">
+        <button onClick="{{ onScanFace }}" style="width:100%; padding:15px; border:none; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer; color:#fff; background:{{ unlockColor }}; display:flex; align-items:center; justify-content:center; gap:9px;" style-hover="filter:brightness(1.05);">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"></path><path d="M16 4h2a2 2 0 0 1 2 2v2"></path><path d="M20 16v2a2 2 0 0 1-2 2h-2"></path><path d="M8 20H6a2 2 0 0 1-2-2v-2"></path><path d="M9 10h.01"></path><path d="M15 10h.01"></path><path d="M9.5 15a3.5 3.5 0 0 0 5 0"></path></svg>
+          Scan face
+        </button>
+        </sc-if>
+        <button onClick="{{ onUseCode }}" style="width:100%; padding:15px; border:1.5px solid #E0D8D0; background:#fff; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer; color:#5A5250; display:flex; align-items:center; justify-content:center; gap:9px;" style-hover="background:#F5F0EC;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+          Email me a code
+        </button>
+        <button onClick="{{ onCloseUnlock }}" style="width:100%; padding:12px; border:none; background:none; color:#9A8F88; font-size:14px; font-weight:800; cursor:pointer;">Cancel</button>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ unlockIsFace }}">
+      <div style="position:relative; width:220px; height:220px; margin:14px auto 12px; border-radius:50%; overflow:hidden; background:#1a1410; box-shadow:inset 0 0 0 3px #ECE0D8;">
+        <video ref="{{ setUnlockVideo }}" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; transform:scaleX(-1);"></video>
+      </div>
+      <p style="font-size:13px; font-weight:700; color:#7C7068; min-height:20px; margin:0 0 14px;">{{ unlockStatus }}</p>
+      <div style="display:flex; gap:10px;">
+        <button onClick="{{ onBackToChoose }}" style="flex:none; padding:13px 18px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:15px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Back</button>
+        <button onClick="{{ onDoScan }}" style="{{ unlockPrimaryStyle }}" style-hover="filter:brightness(1.05);">Scan</button>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ unlockIsOtp }}">
+      <sc-if value="{{ otpNotRequested }}">
+      <p style="font-size:14px; color:#9A8F88; margin:10px 0 18px;">We'll email a 6-digit code to the address on this profile.</p>
+      <div style="display:flex; gap:10px;">
+        <button onClick="{{ onBackToChoose }}" style="flex:none; padding:13px 18px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:15px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Back</button>
+        <button onClick="{{ onSendCode }}" style="{{ unlockPrimaryStyle }}" style-hover="filter:brightness(1.05);">Email code</button>
+      </div>
+      </sc-if>
+      <sc-if value="{{ otpRequested }}">
+      <p style="font-size:14px; color:#9A8F88; margin:8px 0 14px;">Enter the 6-digit code sent to {{ otpMasked }}.</p>
+      <input value="{{ fOtp }}" onInput="{{ onOtpInput }}" inputmode="numeric" maxlength="6" placeholder="••••••" style="width:100%; text-align:center; letter-spacing:8px; font-size:24px; font-weight:800; padding:14px; border:1.5px solid #ECE0D8; border-radius:16px; background:#FBF6F2; color:#2E2A27; margin-bottom:14px;" style-focus="border-color:{{ unlockColor }}; background:#fff;" />
+      <div style="display:flex; gap:10px;">
+        <button onClick="{{ onSendCode }}" style="flex:none; padding:13px 16px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:15px; font-size:14px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Resend</button>
+        <button onClick="{{ onVerifyCode }}" style="{{ unlockPrimaryStyle }}" style-hover="filter:brightness(1.05);">Verify</button>
+      </div>
+      </sc-if>
+      </sc-if>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ CONFIRM DELETE ============ -->
+  <sc-if value="{{ confirmOpen }}">
+  <div style="position:fixed; inset:0; z-index:300; display:flex; align-items:center; justify-content:center; padding:24px;">
+    <div onClick="{{ onCancelConfirm }}" style="position:absolute; inset:0; background:rgba(48,32,24,.45); animation:{{ confirmBackdropAnim }};"></div>
+    <div style="position:relative; width:100%; max-width:380px; background:#fff; border-radius:24px; padding:26px 24px 22px; box-shadow:0 20px 50px rgba(40,20,10,.25); animation:{{ confirmCardAnim }}; text-align:center;">
+      <div style="width:56px; height:56px; border-radius:18px; background:#FBE3D8; display:flex; align-items:center; justify-content:center; margin:0 auto 16px;">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#D2553A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"></path></svg>
+      </div>
+      <h2 style="font-size:20px; font-weight:900; letter-spacing:-.02em; margin:0 0 8px;">{{ confirmTitle }}</h2>
+      <p style="font-size:15px; color:#9A8F88; margin:0 0 22px; line-height:1.45;">{{ confirmMessage }}</p>
+      <div style="display:flex; gap:10px;">
+        <button onClick="{{ onCancelConfirm }}" style="flex:1; padding:13px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:14px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Cancel</button>
+        <button onClick="{{ onConfirmDelete }}" style="flex:1; padding:13px; border:none; background:#D2553A; color:#fff; border-radius:14px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="filter:brightness(1.05);" style-active="transform:scale(.99);">{{ confirmLabel }}</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ TOAST ============ -->
+  <sc-if value="{{ showToast }}">
+  <div style="position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:400; background:#2E2A27; color:#fff; padding:12px 18px; border-radius:14px; font-size:14px; font-weight:800; box-shadow:0 8px 28px rgba(0,0,0,.25); animation:taskIn .25s ease both; max-width:90vw; display:flex; align-items:center; gap:10px;">
+    <span style="{{ toastIconStyle }}">
+      <sc-if value="{{ toastIsSuccess }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg></sc-if>
+      <sc-if value="{{ toastIsError }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"></path></svg></sc-if>
+    </span>
+    <span>{{ toastMsg }}</span>
+  </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1133,&quot;height&quot;:834},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#E8694A&quot;,&quot;options&quot;:[&quot;#E8694A&quot;,&quot;#5B9A8B&quot;,&quot;#6B8CAE&quot;,&quot;#C97B84&quot;]},&quot;font&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;Sora&quot;,&quot;options&quot;:[&quot;Nunito&quot;,&quot;Plus Jakarta Sans&quot;,&quot;DM Sans&quot;,&quot;Outfit&quot;,&quot;Sora&quot;]}}">
+class Component extends DCLogic {
+  avatarColors = ['#E8694A','#E0A458','#5B9A8B','#6B8CAE','#C97B84','#8B9A6B','#9B7BA8','#D98C5F'];
+  // API base: explicit override wins; on localhost talk to the dev API on :3001;
+  // anywhere else (e.g. the deployed domain) use the same origin + /api.
+  API = (typeof window!=='undefined' && window.DAYFLOW_API_BASE)
+    || ((typeof location!=='undefined' && /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname))
+          ? 'http://localhost:3001/api'
+          : ((typeof location!=='undefined' && location.origin && location.origin!=='null') ? location.origin+'/api' : 'http://localhost:3001/api'));
+  RESET_KEY = 'dayflow_lastReset';
+  DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  CUR = 'AED';
+  DAY_LETTER = ['S','M','T','W','T','F','S'];
+  FONTS = {'Nunito':"'Nunito',sans-serif",'Plus Jakarta Sans':"'Plus Jakarta Sans',sans-serif",'DM Sans':"'DM Sans',sans-serif",'Outfit':"'Outfit',sans-serif",'Sora':"'Sora',sans-serif"};
+  CATS = [
+    {key:'food',label:'Food & Drink',color:'#E8694A'},
+    {key:'transport',label:'Transport',color:'#E0A458'},
+    {key:'shopping',label:'Shopping',color:'#9B7BA8'},
+    {key:'entertainment',label:'Entertainment',color:'#6B8CAE'},
+    {key:'health',label:'Health',color:'#5B9A8B'},
+    {key:'bills',label:'Bills',color:'#8B9A6B'},
+    {key:'housing',label:'Housing',color:'#C97B84'},
+    {key:'other',label:'Other',color:'#A89E96'},
+  ];
+
+  get accent() { return this.props.accent || '#E8694A'; }
+
+  constructor(props) {
+    super(props);
+    this.state = {
+      loading: true, loadError: null, toast: null,
+      needKey: false, keyInput: '', keyBusy: false, keyError: '',
+      screen: '', profiles: [], activeId: null, activeTab: 'tasks',
+      obName: '', obEmail: '', obColor: this.avatarColors[0], obFromManage: false,
+      modalOpen: false, modalClosing: false, editingId: null,
+      fTitle: '', fTime: '', fType: 'daily', fDays: [],
+      dragId: null, dragFrom: -1, dragTarget: -1, dragDy: 0,
+      removingIds: [], justAddedId: null, progBump: 0,
+      vaultRevealedIds: [], vaultModalOpen: false, vaultModalClosing: false, editingVaultId: null,
+      fVaultLabel: '', fVaultUser: '', fVaultPass: '', fVaultNotes: '', showVaultPass: false,
+      reminderModalOpen: false, reminderModalClosing: false, editingReminderId: null,
+      fRTitle: '', fRDatetime: '', fRMethod: 'notification', fREmail: '',
+      expenseModalOpen: false, expenseModalClosing: false, editingExpenseId: null,
+      fETitle: '', fEAmount: '', fEType: 'expense', fECategory: 'food', fEDate: '', voiceListening: false,
+      confirmOpen: false, confirmClosing: false, confirmTitle: '', confirmMessage: '', confirmLabel: 'Delete',
+      enrollProfileId: null, enrollBusy: false, enrollStatus: '',
+      unlockProfileId: null, unlockMode: 'choose', unlockPurpose: 'open', unlockBusy: false, unlockStatus: '', fOtp: '', otpMasked: '', otpRequested: false,
+    };
+  }
+
+  componentDidMount() {
+    if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    this.boot();
+  }
+  componentDidUpdate() { if(this.spendChartEl) this.renderSpendChart(); if(this.donutChartEl) this.renderDonutChart(); }
+  componentWillUnmount() { if(this.spendChart){this.spendChart.destroy();this.spendChart=null;} if(this.donutChart){this.donutChart.destroy();this.donutChart=null;} }
+
+  todayKey() { const d=new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+  weekday() { return new Date().getDay(); }
+  dateLabel() {
+    const d=new Date();
+    return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()]+', '+['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()]+' '+d.getDate();
+  }
+  fmtTime(t) {
+    if(!t) return '';
+    const [h,m]=[+t.split(':')[0],+t.split(':')[1]];
+    return (h%12||12)+':'+String(m).padStart(2,'0')+' '+(h>=12?'PM':'AM');
+  }
+  fmtCurrency(n) { return this.CUR+' '+Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+  fmtDate(iso) {
+    const d=new Date(iso);
+    return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  }
+  fmtExpDate(s) { const d=new Date(s+'T00:00:00'); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+  uid() { this._n=(this._n||0)+1; return 'id'+Date.now().toString(36)+this._n; }
+
+  // ---- API data layer --------------------------------------------------
+  SESSION_KEY = 'dayflow_session';
+  loadSession(){
+    try{const s=JSON.parse(localStorage.getItem(this.SESSION_KEY)||'null');
+      if(s&&s.token&&(!s.exp||s.exp>Date.now()))return s;}catch(e){}
+    return null;
+  }
+  saveSession(token,expiresAt){this.authToken=token;try{localStorage.setItem(this.SESSION_KEY,JSON.stringify({token,exp:expiresAt||0}));}catch(e){}}
+  clearSession(){this.authToken=null;try{localStorage.removeItem(this.SESSION_KEY);}catch(e){}}
+  api(method,path,body){
+    const headers={};
+    if(body)headers['Content-Type']='application/json';
+    if(this.authToken)headers['Authorization']='Bearer '+this.authToken;
+    return fetch(this.API+path,{method,headers,body:body?JSON.stringify(body):undefined})
+      .then(async res=>{
+        if(res.status===204)return null;
+        let data=null;try{data=await res.json();}catch(e){}
+        if(!res.ok){const err=new Error((data&&data.error)||('HTTP '+res.status));err.status=res.status;throw err;}
+        return data;
+      });
+  }
+  // A 401 means the household session is missing/expired — drop back to the key gate.
+  handleAuthError(e){
+    if(e&&e.status===401){this.clearSession();this.setState({loading:false,needKey:true,screen:'gate',keyBusy:false});return true;}
+    return false;
+  }
+  mapTask(t){return{id:t.id,title:t.title,type:t.type,time:t.time||'',days:t.days||[],completed:!!t.completed};}
+  mapReminder(r){return{id:r.id,title:r.title,datetime:r.datetime,method:r.method,email:r.email||'',done:!!r.done};}
+  mapExpense(e){return{id:e.id,title:e.title,amount:Number(e.amount),type:e.type,category:e.category||'other',date:String(e.date).slice(0,10),note:e.note||''};}
+  mapVault(v){return{id:v.id,label:v.label,username:v.username||'',password:v.password||'',notes:v.notes||''};}
+  async loadFromServer(){
+    const profiles=await this.api('GET','/profiles');
+    return Promise.all(profiles.map(async p=>{
+      const [tasks,reminders,expenses,vault]=await Promise.all([
+        this.api('GET','/profiles/'+p.id+'/tasks'),
+        this.api('GET','/profiles/'+p.id+'/reminders'),
+        this.api('GET','/profiles/'+p.id+'/expenses'),
+        this.api('GET','/profiles/'+p.id+'/vault').catch(()=>[]),
+      ]);
+      return {id:p.id,name:p.name,color:p.color,email:p.email||'',faceEnrolled:!!p.faceEnrolled,authDisabled:!!p.authDisabled,
+        tasks:tasks.map(t=>this.mapTask(t)),
+        reminders:reminders.map(r=>this.mapReminder(r)),
+        expenses:expenses.map(e=>this.mapExpense(e)),
+        vault:vault.map(v=>this.mapVault(v))};
+    }));
+  }
+  // Reset recurring tasks once per calendar day (mirrors the old local logic).
+  // First-ever load just records the marker; it does not wipe seeded state.
+  async dailyReset(profiles){
+    let last=null;try{last=localStorage.getItem(this.RESET_KEY);}catch(e){}
+    const today=this.todayKey();
+    if(last===today)return profiles;
+    if(!last){try{localStorage.setItem(this.RESET_KEY,today);}catch(e){}return profiles;}
+    const ops=[];
+    profiles.forEach(p=>{
+      p.tasks=p.tasks.filter(t=>{
+        if(t.type==='onetime'&&t.completed){ops.push(this.api('DELETE','/tasks/'+t.id).catch(()=>{}));return false;}
+        if(t.completed){t.completed=false;ops.push(this.api('PATCH','/tasks/'+t.id,{completed:false}).catch(()=>{}));}
+        return true;
+      });
+    });
+    try{await Promise.all(ops);}catch(e){}
+    try{localStorage.setItem(this.RESET_KEY,today);}catch(e){}
+    return profiles;
+  }
+  async boot(){
+    try{
+      // Is the API protected by a household key? (public, needs no token)
+      let authRequired=false;
+      try{const h=await this.api('GET','/health');authRequired=!!h&&h.auth==='enabled';}catch(e){}
+      this.authRequired=authRequired;
+      if(authRequired){
+        const sess=this.loadSession();
+        if(!sess){this.setState({loading:false,needKey:true,screen:'gate'});return;}
+        this.authToken=sess.token;
+      }
+      let profiles=await this.loadFromServer();
+      profiles=await this.dailyReset(profiles);
+      this.setState({profiles,loading:false,loadError:null,needKey:false,screen:profiles.length?'picker':'onboarding'});
+      if(typeof Notification!=='undefined'&&Notification.permission==='granted')this.initPush(false);
+    }catch(e){
+      if(this.handleAuthError(e))return;
+      this.setState({loading:false,loadError:(e&&e.message)||'Could not reach the server'});
+    }
+  }
+  async submitKey(){
+    const key=(this.state.keyInput||'').trim();
+    if(!key||this.state.keyBusy)return;
+    this.setState({keyBusy:true,keyError:''});
+    try{
+      const r=await this.api('POST','/auth',{key});
+      if(r&&r.token)this.saveSession(r.token,r.expiresAt);
+      this.setState({keyBusy:false,needKey:false,keyInput:'',keyError:'',loading:true,screen:''});
+      this.boot();
+    }catch(e){
+      const msg=e&&e.status===429?'Too many attempts — wait a few minutes and try again.':'Incorrect access key.';
+      this.setState({keyBusy:false,keyError:msg});
+    }
+  }
+  retryLoad(){this.setState({loading:true,loadError:null});this.boot();}
+  reloadProfiles(){this.loadFromServer().then(profiles=>this.setState({profiles})).catch((e)=>{this.handleAuthError(e);});}
+  syncFail(e){if(this.handleAuthError(e))return;this.toast((e&&e.message)?('Sync failed: '+e.message):'Sync failed','error');this.reloadProfiles();}
+  toast(msg,type){const tok=(this._toastTok=(this._toastTok||0)+1);this.setState({toast:{msg,type:type||'success'}});setTimeout(()=>{if(this._toastTok===tok)this.setState({toast:null});},3000);}
+  // ---- confirmation dialog ----
+  askConfirm(opts){this._confirmAction=opts.onConfirm;this.setState({confirmOpen:true,confirmClosing:false,confirmTitle:opts.title||'Are you sure?',confirmMessage:opts.message||'',confirmLabel:opts.confirmLabel||'Delete'});}
+  closeConfirm(){this.setState({confirmClosing:true});setTimeout(()=>this.setState({confirmOpen:false,confirmClosing:false}),200);}
+  runConfirm(){const fn=this._confirmAction;this._confirmAction=null;this.closeConfirm();if(fn)fn();}
+  confirmDelete(kind,id,label){
+    const nouns={task:'task',reminder:'reminder',expense:'transaction',vault:'credential',profile:'profile'};
+    const fns={task:()=>this.deleteTask(id),reminder:()=>this.deleteReminder(id),expense:()=>this.deleteExpense(id),vault:()=>this.deleteVaultItem(id),profile:()=>this.deleteProfile(id)};
+    const noun=nouns[kind]||'item';
+    const q=label?('“'+label+'”'):('This '+noun);
+    const message=kind==='profile'?(q+' and all of their tasks, reminders, expenses and vault items will be permanently deleted.'):(q+' will be permanently deleted.');
+    this.askConfirm({title:'Delete '+noun+'?',message,confirmLabel:'Delete',onConfirm:fns[kind]});
+  }
+  toLocalInput(iso){const d=new Date(iso);if(isNaN(d.getTime()))return String(iso).slice(0,16);const p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());}
+
+  activeProfile(){return this.state.profiles.find(p=>p.id===this.state.activeId);}
+  visibleTasks(p){
+    if(!p) return [];
+    const wd=this.weekday();
+    return p.tasks.filter(t=>t.type==='weekly'?(t.days||[]).includes(wd):true);
+  }
+  progress(p){const vis=this.visibleTasks(p);const done=vis.filter(t=>t.completed).length;return{done,total:vis.length,pct:vis.length?done/vis.length:0};}
+  daysLabel(days){if(!days||!days.length)return '';const order=[1,2,3,4,5,6,0];return order.filter(d=>days.includes(d)).map(d=>this.DAY_ABBR[d]).join(', ');}
+  catInfo(key){return this.CATS.find(c=>c.key===key)||this.CATS[this.CATS.length-1];}
+
+  openProfile(id){this.setState({screen:'profile',activeId:id,activeTab:'tasks'});}
+  goBack(){this.setState({screen:'picker',activeId:null});}
+  goManage(){this.setState({screen:'manage'});}
+
+  isEmail(s){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((s||'').trim());}
+  submitOnboarding(){
+    const name=this.state.obName.trim();const email=this.state.obEmail.trim();
+    if(!name||!this.isEmail(email))return;
+    const color=this.state.obColor;const fromManage=this.state.obFromManage;
+    this.api('POST','/profiles',{name,color,email}).then(p=>{
+      const prof={id:p.id,name:p.name,color:p.color,email:p.email,faceEnrolled:false,tasks:[],vault:[],reminders:[],expenses:[]};
+      const profiles=this.state.profiles.concat([prof]);
+      this.setState({profiles,obName:'',obEmail:'',obColor:this.avatarColors[0],screen:fromManage?'manage':'picker',obFromManage:false});
+      this.toast('Profile created');
+    }).catch(e=>this.toast('Could not create profile: '+e.message,'error'));
+  }
+
+  toggleTask(id){
+    let next=null;
+    const profiles=this.state.profiles.map(p=>{
+      if(p.id!==this.state.activeId)return p;
+      return Object.assign({},p,{tasks:p.tasks.map(t=>{if(t.id!==id)return t;next=!t.completed;return Object.assign({},t,{completed:next});})});
+    });
+    this.setState({profiles,progBump:this.state.progBump+1});
+    this.api('PATCH','/tasks/'+id,{completed:next}).catch(e=>this.syncFail(e));
+  }
+  deleteTask(id){
+    this.setState({removingIds:this.state.removingIds.concat([id])});
+    this.api('DELETE','/tasks/'+id).then(()=>{
+      setTimeout(()=>{
+        const profiles=this.state.profiles.map(p=>{if(p.id!==this.state.activeId)return p;return Object.assign({},p,{tasks:p.tasks.filter(t=>t.id!==id)});});
+        this.setState({profiles,removingIds:this.state.removingIds.filter(x=>x!==id),progBump:this.state.progBump+1});
+        this.toast('Task deleted');
+      },280);
+    }).catch(e=>{this.setState({removingIds:this.state.removingIds.filter(x=>x!==id)});this.syncFail(e);});
+  }
+  openAdd(){this.setState({modalOpen:true,modalClosing:false,editingId:null,fTitle:'',fTime:'',fType:'daily',fDays:[]});}
+  openEdit(id){
+    const p=this.activeProfile();const t=p.tasks.find(x=>x.id===id);if(!t)return;
+    this.setState({modalOpen:true,modalClosing:false,editingId:id,fTitle:t.title,fTime:t.time||'',fType:t.type,fDays:(t.days||[]).slice()});
+  }
+  closeModal(){this.setState({modalClosing:true});setTimeout(()=>this.setState({modalOpen:false,modalClosing:false,editingId:null}),240);}
+  saveTask(){
+    const title=this.state.fTitle.trim();if(!title)return;
+    const fType=this.state.fType,fTime=this.state.fTime;
+    let days=fType==='weekly'?this.state.fDays.slice():[];
+    if(fType==='weekly'&&days.length===0)days=[this.weekday()];
+    const editing=this.state.editingId;const pid=this.state.activeId;
+    const payload={title,time:fTime||null,type:fType,days};
+    this.closeModal();
+    if(editing){
+      this.api('PATCH','/tasks/'+editing,payload).then(()=>{
+        const profiles=this.state.profiles.map(p=>p.id!==pid?p:Object.assign({},p,{tasks:p.tasks.map(t=>t.id===editing?Object.assign({},t,{title,time:fTime,type:fType,days}):t)}));
+        this.setState({profiles,progBump:this.state.progBump+1});
+        this.toast('Task updated');
+      }).catch(e=>this.syncFail(e));
+    }else{
+      this.api('POST','/profiles/'+pid+'/tasks',payload).then(r=>{
+        const newTask=this.mapTask(r);
+        const profiles=this.state.profiles.map(p=>p.id!==pid?p:Object.assign({},p,{tasks:p.tasks.concat([newTask])}));
+        this.setState({profiles,justAddedId:r.id,progBump:this.state.progBump+1});
+        this.toast('Task added');
+        setTimeout(()=>{if(this.state.justAddedId===r.id)this.setState({justAddedId:null});},500);
+      }).catch(e=>this.syncFail(e));
+    }
+  }
+
+  addProfile(){this.setState({screen:'onboarding',obFromManage:true,obName:'',obEmail:'',obColor:this.avatarColors[this.state.profiles.length%this.avatarColors.length]});}
+  deleteProfile(id){
+    const profiles=this.state.profiles.filter(p=>p.id!==id);
+    this.setState({profiles,screen:profiles.length?'manage':'onboarding',obFromManage:false});
+    this.api('DELETE','/profiles/'+id).then(()=>this.toast('Profile deleted')).catch(e=>this.syncFail(e));
+  }
+
+  openAddVault(){this.setState({vaultModalOpen:true,vaultModalClosing:false,editingVaultId:null,fVaultLabel:'',fVaultUser:'',fVaultPass:'',fVaultNotes:'',showVaultPass:false});}
+  openEditVault(id){
+    const p=this.activeProfile();const v=(p.vault||[]).find(x=>x.id===id);if(!v)return;
+    this.setState({vaultModalOpen:true,vaultModalClosing:false,editingVaultId:id,fVaultLabel:v.label,fVaultUser:v.username||'',fVaultPass:v.password||'',fVaultNotes:v.notes||'',showVaultPass:false});
+  }
+  closeVaultModal(){this.setState({vaultModalClosing:true});setTimeout(()=>this.setState({vaultModalOpen:false,vaultModalClosing:false,editingVaultId:null}),240);}
+  saveVault(){
+    const label=this.state.fVaultLabel.trim();if(!label)return;
+    const editing=this.state.editingVaultId;const pid=this.state.activeId;
+    const body={label,username:this.state.fVaultUser,password:this.state.fVaultPass,notes:this.state.fVaultNotes};
+    this.closeVaultModal();
+    const req=editing?this.api('PATCH','/vault/'+editing,body):this.api('POST','/profiles/'+pid+'/vault',body);
+    req.then(v=>{
+      const item=this.mapVault(v);
+      const profiles=this.state.profiles.map(p=>{
+        if(p.id!==pid)return p;
+        let vault=(p.vault||[]).slice();
+        if(editing)vault=vault.map(x=>x.id===editing?item:x);else vault=vault.concat([item]);
+        return Object.assign({},p,{vault});
+      });
+      this.setState({profiles});
+      this.toast(editing?'Credential updated':'Credential saved');
+    }).catch(e=>this.syncFail(e));
+  }
+  deleteVaultItem(id){
+    const profiles=this.state.profiles.map(p=>{if(p.id!==this.state.activeId)return p;return Object.assign({},p,{vault:(p.vault||[]).filter(v=>v.id!==id)});});
+    this.setState({profiles});
+    this.api('DELETE','/vault/'+id).then(()=>this.toast('Credential deleted')).catch(e=>this.syncFail(e));
+  }
+  toggleVaultReveal(id){const ids=this.state.vaultRevealedIds;this.setState({vaultRevealedIds:ids.includes(id)?ids.filter(x=>x!==id):ids.concat([id])});}
+
+  openAddReminder(){
+    const d=new Date();d.setDate(d.getDate()+1);d.setHours(9,0,0,0);
+    this.setState({reminderModalOpen:true,reminderModalClosing:false,editingReminderId:null,fRTitle:'',fRDatetime:d.toISOString().slice(0,16),fRMethod:'notification',fREmail:''});
+  }
+  openEditReminder(id){
+    const p=this.activeProfile();const r=(p.reminders||[]).find(x=>x.id===id);if(!r)return;
+    this.setState({reminderModalOpen:true,reminderModalClosing:false,editingReminderId:id,fRTitle:r.title,fRDatetime:this.toLocalInput(r.datetime),fRMethod:r.method,fREmail:r.email||''});
+  }
+  closeReminderModal(){this.setState({reminderModalClosing:true});setTimeout(()=>this.setState({reminderModalOpen:false,reminderModalClosing:false,editingReminderId:null}),240);}
+  saveReminder(){
+    const title=this.state.fRTitle.trim();if(!title||!this.state.fRDatetime)return;
+    const editing=this.state.editingReminderId;const pid=this.state.activeId;
+    const body={title,datetime:new Date(this.state.fRDatetime).toISOString(),method:this.state.fRMethod,email:this.state.fREmail};
+    this.closeReminderModal();
+    const req=editing?this.api('PATCH','/reminders/'+editing,body):this.api('POST','/profiles/'+pid+'/reminders',body);
+    req.then(r=>{
+      const item=this.mapReminder(r);
+      const profiles=this.state.profiles.map(p=>{
+        if(p.id!==pid)return p;
+        let reminders=(p.reminders||[]).slice();
+        if(editing)reminders=reminders.map(x=>x.id===editing?item:x);else reminders=reminders.concat([item]);
+        return Object.assign({},p,{reminders});
+      });
+      this.setState({profiles});
+      this.toast(editing?'Reminder updated':'Reminder set');
+    }).catch(e=>this.syncFail(e));
+  }
+  deleteReminder(id){
+    const profiles=this.state.profiles.map(p=>{if(p.id!==this.state.activeId)return p;return Object.assign({},p,{reminders:(p.reminders||[]).filter(r=>r.id!==id)});});
+    this.setState({profiles});
+    this.api('DELETE','/reminders/'+id).then(()=>this.toast('Reminder deleted')).catch(e=>this.syncFail(e));
+  }
+  toggleReminderDone(id){
+    let next=null;
+    const profiles=this.state.profiles.map(p=>{
+      if(p.id!==this.state.activeId)return p;
+      return Object.assign({},p,{reminders:(p.reminders||[]).map(r=>{if(r.id!==id)return r;next=!r.done;return Object.assign({},r,{done:next});})});
+    });
+    this.setState({profiles});
+    this.toast(next?'Reminder completed':'Reminder reopened');
+    this.api('PATCH','/reminders/'+id,{done:next}).catch(e=>this.syncFail(e));
+  }
+  // Reminders are delivered by the server (email + Web Push), so no client-side
+  // timers are needed. We just register a push subscription so the server can
+  // reach this device — even when the app is closed.
+  urlBase64ToUint8Array(base64){
+    const padding='='.repeat((4-base64.length%4)%4);
+    const b64=(base64+padding).replace(/-/g,'+').replace(/_/g,'/');
+    const raw=atob(b64);const arr=new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);
+    return arr;
+  }
+  async initPush(interactive){
+    if(!('serviceWorker' in navigator)||!('PushManager' in window)||typeof Notification==='undefined'){
+      if(interactive)this.toast('Notifications are not supported on this browser','error');
+      return;
+    }
+    try{
+      const reg=await navigator.serviceWorker.register('./sw.js');
+      await navigator.serviceWorker.ready;
+      if(interactive&&Notification.permission==='default')await Notification.requestPermission();
+      if(Notification.permission!=='granted'){if(interactive)this.toast('Notifications were not allowed','error');this.forceUpdate();return;}
+      const meta=await this.api('GET','/push/public-key');
+      if(!meta||!meta.enabled||!meta.key){if(interactive)this.toast('Push is not configured on the server','error');return;}
+      let sub=await reg.pushManager.getSubscription();
+      if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:this.urlBase64ToUint8Array(meta.key)});
+      await this.api('POST','/push/subscribe',{subscription:sub.toJSON()});
+      this.forceUpdate();
+      if(interactive)this.toast('Notifications enabled');
+    }catch(e){
+      if(interactive)this.toast('Could not enable notifications: '+e.message,'error');
+    }
+  }
+  enableNotifications(){this.initPush(true);}
+
+  // ---- face unlock (face-api.js) ----
+  loadFaceModels(){
+    if(this._faceP)return this._faceP;
+    if(typeof faceapi==='undefined'){return Promise.reject(new Error('Face library still loading — try again in a second'));}
+    const base='https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model';
+    this._faceP=Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(base),
+      faceapi.nets.faceLandmark68Net.loadFromUri(base),
+      faceapi.nets.faceRecognitionNet.loadFromUri(base),
+    ]).catch(e=>{this._faceP=null;throw e;});
+    return this._faceP;
+  }
+  async startCamera(video){
+    this.stopCamera();
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:480},height:{ideal:480}},audio:false});
+    this._stream=stream;
+    if(video){video.srcObject=stream;try{await video.play();}catch(e){}}
+    return stream;
+  }
+  stopCamera(){if(this._stream){this._stream.getTracks().forEach(t=>t.stop());this._stream=null;}}
+  async captureDescriptor(video){
+    await this.loadFaceModels();
+    const det=await faceapi.detectSingleFace(video,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.4})).withFaceLandmarks().withFaceDescriptor();
+    return det?Array.from(det.descriptor):null;
+  }
+
+  // enrollment (Manage screen)
+  openEnroll(id){this.setState({enrollProfileId:id,enrollBusy:false,enrollStatus:'Center your face in the frame, then capture.'});}
+  closeEnroll(){this.stopCamera();this.setState({enrollProfileId:null,enrollBusy:false});}
+  setEnrollVideo=(el)=>{if(el){this._enrollVideo=el;this.startCamera(el).catch(e=>this.setState({enrollStatus:'Camera unavailable: '+(e.message||e.name)}));}else{this._enrollVideo=null;}};
+  async doEnroll(){
+    const id=this.state.enrollProfileId;const video=this._enrollVideo;if(!video||this.state.enrollBusy)return;
+    this.setState({enrollBusy:true,enrollStatus:'Loading model & scanning…'});
+    try{
+      const desc=await this.captureDescriptor(video);
+      if(!desc){this.setState({enrollBusy:false,enrollStatus:'No face detected — face the camera in good light and try again.'});return;}
+      await this.api('POST','/profiles/'+id+'/face',{descriptor:desc});
+      const profiles=this.state.profiles.map(p=>p.id===id?Object.assign({},p,{faceEnrolled:true}):p);
+      this.setState({profiles});this.toast('Face unlock enabled');this.closeEnroll();
+    }catch(e){this.setState({enrollBusy:false,enrollStatus:'Error: '+(e.message||'try again')});}
+  }
+  async removeFace(id){
+    try{await this.api('DELETE','/profiles/'+id+'/face');const profiles=this.state.profiles.map(p=>p.id===id?Object.assign({},p,{faceEnrolled:false}):p);this.setState({profiles});this.toast('Face unlock removed');this.closeEnroll();}
+    catch(e){this.toast('Could not remove: '+e.message,'error');}
+  }
+
+  // gate unlock (picker)
+  openUnlock(id,purpose){this.setState({unlockProfileId:id,unlockPurpose:purpose||'open',unlockMode:'choose',unlockBusy:false,unlockStatus:'',fOtp:'',otpMasked:'',otpRequested:false});}
+  closeUnlock(){this.stopCamera();this.setState({unlockProfileId:null,unlockBusy:false,otpRequested:false,fOtp:''});}
+  unlockSuccess(){const id=this.state.unlockProfileId;const purpose=this.state.unlockPurpose;this.stopCamera();this.setState({unlockProfileId:null,otpRequested:false,fOtp:''});if(purpose==='delete')this.deleteProfile(id);else if(purpose==='disableauth')this.setAuthDisabled(id,true);else this.openProfile(id);}
+  setAuthDisabled(id,val){
+    const profiles=this.state.profiles.map(p=>p.id===id?{...p,authDisabled:val}:p);
+    this.setState({profiles});
+    this.api('PATCH','/profiles/'+id,{authDisabled:val}).then(()=>this.toast(val?'Authentication turned off':'Authentication turned on')).catch(e=>this.syncFail(e));
+  }
+  toggleAuth(id){const p=this.state.profiles.find(x=>x.id===id);if(!p)return;if(p.authDisabled)this.setAuthDisabled(id,false);else this.openUnlock(id,'disableauth');}
+  setUnlockVideo=(el)=>{if(el){this._unlockVideo=el;this.startCamera(el).catch(e=>this.setState({unlockStatus:'Camera unavailable: '+(e.message||e.name)}));}else{this._unlockVideo=null;}};
+  startFaceUnlock(){this.setState({unlockMode:'face',unlockBusy:false,unlockStatus:'Center your face, then scan.'});}
+  backToChoose(){this.stopCamera();this.setState({unlockMode:'choose',unlockBusy:false,unlockStatus:''});}
+  async doFaceUnlock(){
+    const video=this._unlockVideo;const id=this.state.unlockProfileId;if(!video||this.state.unlockBusy)return;
+    this.setState({unlockBusy:true,unlockStatus:'Scanning…'});
+    try{
+      const desc=await this.captureDescriptor(video);
+      if(!desc){this.setState({unlockBusy:false,unlockStatus:'No face detected — try again.'});return;}
+      const res=await this.api('POST','/face/match',{descriptor:desc});
+      if(res&&res.matched&&res.profileId===id){if(this.state.unlockPurpose==='open')this.toast('Welcome back!');this.unlockSuccess();}
+      else this.setState({unlockBusy:false,unlockStatus:(res&&res.matched)?'That matched a different profile.':'Not recognized — try again or use an email code.'});
+    }catch(e){this.setState({unlockBusy:false,unlockStatus:'Error: '+(e.message||'try again')});}
+  }
+  startOtpUnlock(){this.stopCamera();this.setState({unlockMode:'otp',unlockBusy:false,unlockStatus:'',otpRequested:false,fOtp:''});}
+  async requestOtp(){
+    const id=this.state.unlockProfileId;if(this.state.unlockBusy)return;
+    this.setState({unlockBusy:true});
+    try{const r=await this.api('POST','/profiles/'+id+'/otp/request');this.setState({unlockBusy:false,otpRequested:true,otpMasked:(r&&r.email)||'',fOtp:''});this.toast('Code sent to '+((r&&r.email)||'your email'));}
+    catch(e){this.setState({unlockBusy:false});this.toast('Could not send code: '+e.message,'error');}
+  }
+  async verifyOtp(){
+    const id=this.state.unlockProfileId;const code=this.state.fOtp.trim();
+    if(!/^\d{4,8}$/.test(code)||this.state.unlockBusy)return;
+    this.setState({unlockBusy:true});
+    try{const r=await this.api('POST','/profiles/'+id+'/otp/verify',{code});if(r&&r.verified){if(this.state.unlockPurpose==='open')this.toast('Unlocked');this.unlockSuccess();}else{this.setState({unlockBusy:false});this.toast('Incorrect code','error');}}
+    catch(e){this.setState({unlockBusy:false});this.toast(e.message||'Verification failed','error');}
+  }
+
+  openAddExpense(){
+    const today=new Date().toISOString().slice(0,10);
+    this.setState({expenseModalOpen:true,expenseModalClosing:false,editingExpenseId:null,fETitle:'',fEAmount:'',fEType:'expense',fECategory:'food',fEDate:today});
+  }
+  openEditExpense(id){
+    const p=this.activeProfile();const e=(p.expenses||[]).find(x=>x.id===id);if(!e)return;
+    this.setState({expenseModalOpen:true,expenseModalClosing:false,editingExpenseId:id,fETitle:e.title,fEAmount:String(e.amount),fEType:e.type,fECategory:e.category||'food',fEDate:e.date});
+  }
+  closeExpenseModal(){this.stopVoice();this.setState({expenseModalClosing:true});setTimeout(()=>this.setState({expenseModalOpen:false,expenseModalClosing:false,editingExpenseId:null}),240);}
+
+  // ---- voice expense input (Web Speech API) ----
+  ensureRecognition(){
+    const SR=(typeof window!=='undefined')&&(window.SpeechRecognition||window.webkitSpeechRecognition);
+    if(!SR)return null;
+    if(this._recog)return this._recog;
+    const r=new SR();r.lang='en-US';r.interimResults=false;r.maxAlternatives=1;r.continuous=false;
+    r.onresult=(e)=>{const t=e.results[0][0].transcript;this.applyVoiceExpense(t);};
+    r.onerror=(e)=>{this.setState({voiceListening:false});if(e.error==='no-speech')this.toast("Didn't catch that — try again",'error');else if(e.error==='not-allowed'||e.error==='service-not-allowed')this.toast('Microphone permission denied','error');else if(e.error!=='aborted')this.toast('Voice error: '+e.error,'error');};
+    r.onend=()=>{this.setState({voiceListening:false});};
+    this._recog=r;return r;
+  }
+  startVoiceExpense(){
+    const r=this.ensureRecognition();
+    if(!r){this.toast('Voice input is not supported on this browser','error');return;}
+    try{this.setState({voiceListening:true});r.start();}catch(e){/* already started */this.setState({voiceListening:false});}
+  }
+  stopVoice(){if(this._recog){try{this._recog.abort();}catch(e){}}if(this.state.voiceListening)this.setState({voiceListening:false});}
+  applyVoiceExpense(transcript){
+    const p=this.parseExpenseSpeech(transcript);
+    const patch={fEType:p.type};
+    if(p.amount!=null&&!isNaN(p.amount))patch.fEAmount=String(p.amount);
+    if(p.title)patch.fETitle=p.title;
+    if(p.type==='expense')patch.fECategory=p.category;
+    this.setState(patch);
+    this.toast('Heard: "'+transcript+'"');
+  }
+  wordsToNumber(text){
+    const ones={zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19};
+    const tens={twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+    let total=null,cur=0,found=false;
+    text.split(/[\s-]+/).forEach(w=>{
+      if(ones[w]!=null){cur+=ones[w];found=true;}
+      else if(tens[w]!=null){cur+=tens[w];found=true;}
+      else if(w==='hundred'){cur=(cur||1)*100;found=true;}
+      else if(w==='thousand'){total=(total||0)+(cur||1)*1000;cur=0;found=true;}
+    });
+    return found?(total||0)+cur:null;
+  }
+  parseExpenseSpeech(text){
+    const lower=text.toLowerCase();
+    let amount=null;
+    const m=lower.match(/\d+(?:\.\d{1,2})?/);
+    if(m)amount=parseFloat(m[0]);else amount=this.wordsToNumber(lower);
+    const incomeWords=['income','salary','got paid','paid me','received','earned','allowance','pocket money','refund','bonus','deposit'];
+    const type=incomeWords.some(w=>lower.includes(w))?'income':'expense';
+    const catKeywords={
+      food:['food','grocery','groceries','coffee','lunch','dinner','breakfast','restaurant','snack','snacks','drink','meal','pizza','cafe','tea','burger'],
+      transport:['uber','taxi','cab','bus','train','fuel','gas','petrol','transport','ride','parking','flight','metro','fare'],
+      shopping:['amazon','clothes','clothing','shopping','shoes','store','gift','electronics','online order'],
+      entertainment:['movie','movies','netflix','game','games','concert','spotify','entertainment','cinema','subscription'],
+      health:['gym','doctor','medicine','pharmacy','health','dentist','hospital','fitness','medical'],
+      bills:['bill','bills','electricity','water','internet','phone','wifi','utility','utilities'],
+      housing:['rent','mortgage','housing','furniture'],
+    };
+    let category='other';
+    for(const k in catKeywords){if(catKeywords[k].some(w=>lower.includes(w))){category=k;break;}}
+    let title=text.replace(/[\$£€]/g,' ').replace(/\d+(?:\.\d{1,2})?/g,' ')
+      .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b/gi,' ')
+      .replace(/\b(dirhams?|dhs?|aed|fils|dollars?|bucks?|cents?|for|on|spent|spend|paid|pay|of|a|an|the|to|my|i|me|got|received|earned|just|today|this|that|some)\b/gi,' ')
+      .replace(/\s+/g,' ').trim();
+    if(!title)title=type==='income'?'Income':(category!=='other'?this.catInfo(category).label:'Expense');
+    title=title.charAt(0).toUpperCase()+title.slice(1);
+    return {title,amount,type,category};
+  }
+  saveExpense(){
+    const title=this.state.fETitle.trim();const amount=parseFloat(this.state.fEAmount);
+    if(!title||isNaN(amount)||amount<0)return;
+    const editing=this.state.editingExpenseId;const pid=this.state.activeId;const fEType=this.state.fEType;
+    const body={title,amount,type:fEType,category:fEType==='income'?'income':this.state.fECategory,date:this.state.fEDate};
+    this.closeExpenseModal();
+    const req=editing?this.api('PATCH','/expenses/'+editing,body):this.api('POST','/profiles/'+pid+'/expenses',body);
+    req.then(e=>{
+      const item=this.mapExpense(e);
+      const profiles=this.state.profiles.map(p=>{
+        if(p.id!==pid)return p;
+        let expenses=(p.expenses||[]).slice();
+        if(editing)expenses=expenses.map(x=>x.id===editing?item:x);else expenses=expenses.concat([item]);
+        return Object.assign({},p,{expenses});
+      });
+      this.setState({profiles});
+      this.toast(editing?'Transaction updated':'Transaction logged');
+    }).catch(e=>this.syncFail(e));
+  }
+  deleteExpense(id){
+    const profiles=this.state.profiles.map(p=>{if(p.id!==this.state.activeId)return p;return Object.assign({},p,{expenses:(p.expenses||[]).filter(e=>e.id!==id)});});
+    this.setState({profiles});
+    this.api('DELETE','/expenses/'+id).then(()=>this.toast('Transaction deleted')).catch(e=>this.syncFail(e));
+  }
+
+  // ---- spending trend chart (ApexCharts) ----
+  spendSeries(){
+    const p=this.activeProfile();
+    const days=30;
+    const today=new Date();today.setHours(0,0,0,0);
+    const buckets={};const order=[];
+    for(let i=days-1;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);const k=d.toISOString().slice(0,10);buckets[k]=0;order.push(k);}
+    if(p)(p.expenses||[]).forEach(e=>{if(e.type==='expense'&&buckets[e.date]!==undefined)buckets[e.date]+=Number(e.amount)||0;});
+    const data=order.map(k=>[new Date(k+'T00:00:00').getTime(),Math.round(buckets[k]*100)/100]);
+    return {series:[{name:'Spent',data}],sig:data.map(d=>d[1]).join(',')+'|'+this.accent};
+  }
+  spendChartOptions(series){
+    const accent=this.accent;const cur=this.CUR;
+    return {
+      chart:{type:'area',height:172,fontFamily:"'Sora',sans-serif",toolbar:{show:false},zoom:{enabled:false},animations:{enabled:true,easing:'easeinout',speed:550},parentHeightOffset:0},
+      series,
+      colors:[accent],
+      stroke:{curve:'smooth',width:3,lineCap:'round'},
+      fill:{type:'gradient',gradient:{shadeIntensity:1,opacityFrom:0.42,opacityTo:0.02,stops:[0,92,100]}},
+      dataLabels:{enabled:false},
+      grid:{borderColor:'#F0E8E2',strokeDashArray:4,padding:{left:6,right:6,top:0,bottom:-4},xaxis:{lines:{show:false}}},
+      xaxis:{type:'datetime',tickAmount:5,axisBorder:{show:false},axisTicks:{show:false},tooltip:{enabled:false},labels:{style:{colors:'#9A8F88',fontWeight:700,fontSize:'11px'},datetimeUTC:false,format:'MMM d'},crosshairs:{stroke:{color:accent,dashArray:3}}},
+      yaxis:{tickAmount:3,labels:{style:{colors:'#9A8F88',fontWeight:700,fontSize:'11px'},formatter:v=>cur+' '+Math.round(v)}},
+      tooltip:{theme:'light',x:{format:'MMM d, yyyy'},y:{formatter:v=>cur+' '+Number(v).toFixed(2)}},
+      markers:{size:0,hover:{size:5}},
+    };
+  }
+  renderSpendChart(){
+    const el=this.spendChartEl;
+    if(!el||typeof ApexCharts==='undefined')return;
+    const {series,sig}=this.spendSeries();
+    if(this.spendChart){
+      if(sig!==this._spendSig){this._spendSig=sig;this.spendChart.updateSeries(series,true);}
+      return;
+    }
+    this._spendSig=sig;
+    this.spendChart=new ApexCharts(el,this.spendChartOptions(series));
+    this.spendChart.render();
+  }
+  setSpendChartRef=(el)=>{
+    if(el){this.spendChartEl=el;this.renderSpendChart();}
+    else{if(this.spendChart){this.spendChart.destroy();this.spendChart=null;this._spendSig=null;}this.spendChartEl=null;}
+  };
+
+  // ---- category donut chart (ApexCharts, interactive) ----
+  categoryData(){
+    const p=this.activeProfile();const totals={};
+    if(p)(p.expenses||[]).forEach(e=>{if(e.type==='expense')totals[e.category]=(totals[e.category]||0)+(Number(e.amount)||0);});
+    const segs=this.CATS.filter(c=>totals[c.key]>0).map(c=>({label:c.label,color:c.color,value:Math.round(totals[c.key]*100)/100})).sort((a,b)=>b.value-a.value);
+    return {labels:segs.map(s=>s.label),series:segs.map(s=>s.value),colors:segs.map(s=>s.color),total:segs.reduce((a,b)=>a+b.value,0)};
+  }
+  donutChartOptions(d){
+    const total=d.total;const cur=this.CUR;
+    return {
+      chart:{type:'donut',height:236,fontFamily:"'Sora',sans-serif",animations:{speed:500}},
+      series:d.series,labels:d.labels,colors:d.colors,
+      stroke:{width:2,colors:['#fff']},
+      dataLabels:{enabled:false},
+      legend:{position:'bottom',horizontalAlign:'center',fontSize:'11px',fontWeight:600,labels:{colors:'#5A5250'},markers:{width:8,height:8,radius:6},itemMargin:{horizontal:7,vertical:3},formatter:(name)=>name.length>16?name.slice(0,15)+'…':name},
+      plotOptions:{pie:{expandOnClick:true,donut:{size:'70%',labels:{show:true,name:{show:true,fontSize:'12px',fontWeight:700,color:'#9A8F88',offsetY:18},value:{show:true,fontSize:'21px',fontWeight:900,color:'#2E2A27',offsetY:-12,formatter:v=>cur+' '+Math.round(v)},total:{show:true,showAlways:true,label:'spent',fontSize:'12px',fontWeight:700,color:'#9A8F88',formatter:()=>cur+' '+Math.round(total)}}}}},
+      tooltip:{theme:'light',y:{formatter:v=>cur+' '+Number(v).toFixed(2)}},
+      states:{hover:{filter:{type:'darken',value:0.9}},active:{filter:{type:'darken',value:0.85}}},
+    };
+  }
+  renderDonutChart(){
+    const el=this.donutChartEl;if(!el||typeof ApexCharts==='undefined')return;
+    const d=this.categoryData();const sig=d.series.join(',')+'|'+d.labels.join(',')+'|'+d.total;
+    if(this.donutChart){
+      if(sig!==this._donutSig){this._donutSig=sig;this.donutChart.updateOptions(this.donutChartOptions(d),false,true);}
+      return;
+    }
+    this._donutSig=sig;
+    this.donutChart=new ApexCharts(el,this.donutChartOptions(d));
+    this.donutChart.render();
+  }
+  setDonutChartRef=(el)=>{
+    if(el){this.donutChartEl=el;this.renderDonutChart();}
+    else{if(this.donutChart){this.donutChart.destroy();this.donutChart=null;this._donutSig=null;}this.donutChartEl=null;}
+  };
+
+  // ---- color helpers (hero card) ----
+  hexToRgb(h){h=String(h).replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');const n=parseInt(h,16);return[(n>>16)&255,(n>>8)&255,n&255];}
+  shade(hex,amt){const[r,g,b]=this.hexToRgb(hex);const f=v=>Math.max(0,Math.min(255,Math.round(v+(amt/100)*255)));return '#'+[f(r),f(g),f(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}
+  hexA(hex,a){const[r,g,b]=this.hexToRgb(hex);return 'rgba('+r+','+g+','+b+','+a+')';}
+
+  setListRef=(el)=>{this.listEl=el;};
+  startDrag(e,id,index){
+    if(e.button!=null&&e.button!==0)return;e.preventDefault();
+    const kids=this.listEl?Array.from(this.listEl.children):[];
+    this.dragRects=kids.map(k=>{const r=k.getBoundingClientRect();return{center:r.top+r.height/2,h:r.height};});
+    this.dragFromIdx=index;this.dragStartY=e.clientY;
+    this.dragH=(this.dragRects[index]?this.dragRects[index].h:72)+12;
+    window.addEventListener('pointermove',this._move);window.addEventListener('pointerup',this._up);
+    this.setState({dragId:id,dragFrom:index,dragTarget:index,dragDy:0});
+  }
+  _move=(e)=>{
+    if(this.dragFromIdx==null||!this.dragRects)return;
+    const dy=e.clientY-this.dragStartY;const center=this.dragRects[this.dragFromIdx].center+dy;
+    const n=this.dragRects.length;let target=this.dragFromIdx;
+    for(let i=0;i<this.dragFromIdx;i++){if(center<this.dragRects[i].center){target=i;break;}}
+    for(let i=n-1;i>this.dragFromIdx;i--){if(center>this.dragRects[i].center){target=i;break;}}
+    this.setState({dragDy:dy,dragTarget:target});
+  };
+  _up=()=>{
+    window.removeEventListener('pointermove',this._move);window.removeEventListener('pointerup',this._up);
+    const{dragId,dragFrom,dragTarget}=this.state;
+    if(dragId&&dragTarget!==dragFrom&&dragTarget>=0){
+      const p=this.activeProfile();const vis=this.visibleTasks(p);const targetId=vis[dragTarget]&&vis[dragTarget].id;
+      if(targetId){
+        const profiles=this.state.profiles.map(pr=>{
+          if(pr.id!==this.state.activeId)return pr;
+          const tasks=pr.tasks.slice();const fromPos=tasks.findIndex(t=>t.id===dragId);
+          const moved=tasks.splice(fromPos,1)[0];let tp=tasks.findIndex(t=>t.id===targetId);
+          if(dragTarget>dragFrom)tp+=1;tasks.splice(tp,0,moved);return Object.assign({},pr,{tasks});
+        });
+        this.setState({profiles});
+        const act=profiles.find(pr=>pr.id===this.state.activeId);
+        if(act)this.api('POST','/profiles/'+this.state.activeId+'/tasks/reorder',{ids:act.tasks.map(t=>t.id)}).catch(e=>this.syncFail(e));
+      }
+    }
+    this.dragFromIdx=null;this.dragRects=null;this.setState({dragId:null,dragFrom:-1,dragTarget:-1,dragDy:0});
+  };
+
+  renderVals(){
+    const s=this.state;const accent=this.accent;const screen=s.screen;
+    const fontFamily=this.FONTS[this.props.font]||this.FONTS['Sora'];
+    const isProfileScreen=screen==='profile';
+    const isTasks=isProfileScreen&&s.activeTab==='tasks';
+    const isReminders=isProfileScreen&&s.activeTab==='reminders';
+    const isExpenses=isProfileScreen&&s.activeTab==='expenses';
+    const isVault=isProfileScreen&&s.activeTab==='vault';
+
+    // onboarding
+    const obColors=this.avatarColors.map(c=>({color:c,active:c===s.obColor,onSelect:()=>this.setState({obColor:c}),style:'width:52px;height:52px;border-radius:50%;border:'+(c===s.obColor?'3px solid #2E2A27':'3px solid transparent')+';background:'+c+';cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s,border-color .15s;box-shadow:0 2px 6px rgba(80,50,30,.12);'}));
+    const obCan=s.obName.trim().length>0&&this.isEmail(s.obEmail);
+
+    // picker
+    const pickerProfiles=s.profiles.map(p=>{const pr=this.progress(p);const circ=2*Math.PI*12;const gated=!p.authDisabled;return{id:p.id,name:p.name,color:p.color,initial:(p.name[0]||'?').toUpperCase(),fracLabel:pr.done+' / '+pr.total+' done',circ,dash:circ*(1-pr.pct),locked:gated,onOpen:(gated?(()=>this.openUnlock(p.id)):(()=>this.openProfile(p.id)))};});
+
+    // active profile
+    const active=this.activeProfile();
+    let activeName='',activeColor=accent,activeInitial='?';
+    let tasks=[],progCirc=0,progDash=0,progPct='0%',progFrac='0/0',progSub='',hasTasks=false,isEmpty=true;
+    let heroBg='linear-gradient(135deg,'+accent+','+this.shade(accent,-28)+')',heroShadow=this.hexA(accent,.34),heroGreeting='',heroHeadline='';
+    let reminders=[],hasReminders=false,isRemindersEmpty=true;
+    let expenseItems=[],hasExpenses=false,isExpensesEmpty=true,hasExpenseData=false;
+    let statIncome='$0',statExpense='$0',statNet='$0',netStyle='',netLabel='';
+    let vaultItems=[],hasVaultItems=false,isVaultEmpty=true,vaultCountLabel='';
+
+    if(active){
+      activeName=active.name;activeColor=active.color;activeInitial=(active.name[0]||'?').toUpperCase();
+      // tasks
+      const vis=this.visibleTasks(active);const pr=this.progress(active);const circ=2*Math.PI*28;
+      progCirc=circ;progDash=circ*(1-pr.pct);progPct=Math.round(pr.pct*100)+'%';
+      progFrac=pr.done+' / '+pr.total;progSub=pr.total===0?'Nothing scheduled':(pr.done===pr.total?'All done — great!':'Keep it going');
+      hasTasks=vis.length>0;isEmpty=vis.length===0;
+      const allDone=pr.total>0&&pr.done===pr.total;const heroBase=allDone?'#5B9A8B':accent;
+      heroBg='linear-gradient(135deg,'+heroBase+' 0%,'+this.shade(heroBase,-26)+' 100%)';heroShadow=this.hexA(heroBase,.34);
+      const hr=new Date().getHours();heroGreeting=(hr<12?'Good morning':hr<17?'Good afternoon':hr<21?'Good evening':'Good night');
+      heroHeadline=pr.total===0?'Nothing scheduled':(allDone?'All done! 🎉':(pr.done===0?"Let's get started":'Keep it going!'));
+      const TM={daily:{label:'Daily',color:'#C2410C',bg:'#FBE3D8'},weekly:{label:'Weekly',color:'#2F6F62',bg:'#DCEDE7'},onetime:{label:'One-time',color:'#8A5A8F',bg:'#EFE2F0'}};
+      tasks=vis.map((t,idx)=>{
+        const removing=s.removingIds.includes(t.id);const dragged=s.dragId===t.id;
+        let transform='',z='1',shadow='0 1px 2px rgba(0,0,0,.04)',transition='transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s';
+        if(s.dragId){
+          if(dragged){transform='translateY('+s.dragDy+'px) scale(1.02)';transition='none';z='60';shadow='0 14px 30px rgba(0,0,0,.18)';}
+          else if(s.dragFrom<s.dragTarget&&idx>s.dragFrom&&idx<=s.dragTarget)transform='translateY(-'+this.dragH+'px)';
+          else if(s.dragFrom>s.dragTarget&&idx<s.dragFrom&&idx>=s.dragTarget)transform='translateY('+this.dragH+'px)';
+        }
+        let outer=removing?'overflow:hidden;max-height:0;opacity:0;margin-bottom:0;transform:scale(.96);transition:all .27s ease;position:relative;':'overflow:hidden;max-height:200px;margin-bottom:12px;opacity:1;position:relative;z-index:'+z+';transform:'+(transform||'none')+';transition:'+transition+';';
+        if(!removing&&t.id===s.justAddedId)outer+=' animation:taskIn .32s cubic-bezier(.2,.9,.3,1.2) both;';
+        const tm=TM[t.type]||TM.daily;
+        return{id:t.id,title:t.title,time:this.fmtTime(t.time),hasTime:!!t.time,typeLabel:tm.label,badgeStyle:'font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;color:'+tm.color+';background:'+tm.bg+';',showDays:t.type==='weekly',daysLabel:this.daysLabel(t.days),outerStyle:outer,shadow,
+          accentColor:tm.color,barOpacity:(t.completed?'.3':'1'),cardBg:(t.completed?'#FAF6F2':'#fff'),
+          timeChipStyle:'display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:800;padding:3px 9px;border-radius:999px;color:'+tm.color+';background:'+tm.color+'14;',
+          checkStyle:'width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background-color .22s,border-color .22s;'+(t.completed?'background:'+accent+';border:2px solid '+accent+';':'background:#fff;border:2px solid #DFCFC4;'),
+          checkSvgStyle:'transform:scale('+(t.completed?1:0)+');opacity:'+(t.completed?1:0)+';transition:transform .26s cubic-bezier(.34,1.56,.64,1),opacity .2s;',
+          titleStyle:'display:block;font-size:16px;font-weight:800;line-height:1.25;transition:color .26s;color:'+(t.completed?'#BCAFA5':'#2E2A27')+';',
+          strikeStyle:'position:absolute;left:0;top:52%;height:2px;border-radius:2px;background:#BCAFA5;transition:width .28s ease;width:'+(t.completed?'100%':'0')+';',
+          onToggle:()=>this.toggleTask(t.id),onEdit:()=>this.openEdit(t.id),onDelete:()=>this.confirmDelete('task',t.id,t.title),onDragStart:(e)=>this.startDrag(e,t.id,idx)};
+      });
+
+      // reminders
+      const rems=(active.reminders||[]).slice().sort((a,b)=>new Date(a.datetime)-new Date(b.datetime));
+      hasReminders=rems.length>0;isRemindersEmpty=rems.length===0;
+      reminders=rems.map((r,idx)=>{
+        const now=Date.now();const dt=new Date(r.datetime).getTime();const diff=dt-now;
+        let status,statusColor,statusBg;
+        if(r.done){status='Done';statusColor='#5B9A8B';statusBg='#DCEDE7';}
+        else if(diff<0){status='Overdue';statusColor='#C2410C';statusBg='#FBE3D8';}
+        else if(diff<3600000){status='Due soon';statusColor='#B45309';statusBg='#FEF3C7';}
+        else{status='Upcoming';statusColor='#4B5563';statusBg='#F3F4F6';}
+        return{id:r.id,title:r.title,dueLabel:this.fmtDate(r.datetime),methodLabel:r.method==='notification'?'In-app notification':'Email'+( r.email?' ('+r.email+')':''),isNotification:r.method==='notification',isEmail:r.method==='email',
+          status,statusStyle:'font-size:12px;font-weight:800;padding:2px 10px;border-radius:999px;color:'+statusColor+';background:'+statusBg+';',
+          titleStyle:'font-size:16px;font-weight:800;color:'+(r.done?'#BCAFA5':'#2E2A27')+';text-decoration:'+(r.done?'line-through':'none')+';',
+          outerStyle:'animation:taskIn .28s cubic-bezier(.2,.9,.3,1.1) '+(idx*0.05)+'s both;',
+          doneStyle:'width:34px;height:34px;border:none;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;'+(r.done?'background:'+activeColor+';color:#fff;':'background:#ECEAE7;color:#9A8F88;'),
+          onDone:()=>this.toggleReminderDone(r.id),onEdit:()=>this.openEditReminder(r.id),onDelete:()=>this.confirmDelete('reminder',r.id,r.title)};
+      });
+
+      // expenses
+      const allExp=(active.expenses||[]);
+      const now2=new Date();
+      const monthExp=allExp.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getMonth()===now2.getMonth()&&d.getFullYear()===now2.getFullYear();});
+      const totalInc=monthExp.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
+      const totalExp=monthExp.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
+      const net=totalInc-totalExp;
+      statIncome=this.fmtCurrency(totalInc);statExpense=this.fmtCurrency(totalExp);statNet=(net>=0?'+':'')+this.fmtCurrency(Math.abs(net));
+      netStyle='font-size:22px;font-weight:900;letter-spacing:-.02em;color:'+(net>=0?'#5B9A8B':'#E8694A')+';';
+      netLabel=net>=0?'surplus':'overspent';
+      hasExpenseData=allExp.filter(e=>e.type==='expense').length>0;
+
+      // transaction list (sorted by date desc, show all)
+      const sortedExp=allExp.slice().sort((a,b)=>new Date(b.date)-new Date(a.date));
+      hasExpenses=sortedExp.length>0;isExpensesEmpty=sortedExp.length===0;
+      expenseItems=sortedExp.map((e,idx)=>{
+        const ci=this.catInfo(e.type==='income'?'other':e.category);
+        const catC=e.type==='income'?'#5B9A8B':ci.color;
+        return{id:e.id,title:e.title,catLabel:e.type==='income'?'Income':ci.label,catColor:catC,
+          catBadge:'font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;color:'+catC+';background:'+catC+'22;',
+          dateDisplay:this.fmtExpDate(e.date),amountDisplay:(e.type==='income'?'+':'-')+this.fmtCurrency(e.amount),
+          amountStyle:'font-size:16px;font-weight:900;color:'+(e.type==='income'?'#5B9A8B':'#E8694A')+';white-space:nowrap;flex:none;',
+          outerStyle:'animation:taskIn .25s cubic-bezier(.2,.9,.3,1.1) '+(idx*0.04)+'s both;',
+          onDelete:()=>this.confirmDelete('expense',e.id,e.title)};
+      });
+
+      // vault
+      const vault=active.vault||[];hasVaultItems=vault.length>0;isVaultEmpty=vault.length===0;
+      vaultCountLabel=vault.length+(vault.length===1?' credential':' credentials')+' stored';
+      vaultItems=vault.map((v,idx)=>{
+        const revealed=s.vaultRevealedIds.includes(v.id);const rawPass=v.password||'';
+        return{id:v.id,label:v.label,username:v.username||'',hasUser:!!v.username,notes:v.notes||'',hasNotes:!!v.notes,revealed,notRevealed:!revealed,
+          passDisplay:revealed?rawPass:(rawPass?'•'.repeat(Math.min(rawPass.length,18)):'—'),
+          passStyle:'font-size:14px;font-weight:700;color:#2E2A27;font-family:monospace;letter-spacing:'+(revealed?'.04em':'.18em')+';word-break:break-all;',
+          anim:'taskIn .3s cubic-bezier(.2,.9,.3,1.1) '+(idx*0.06)+'s both',
+          onReveal:()=>this.toggleVaultReveal(v.id),onEdit:()=>this.openEditVault(v.id),onDelete:()=>this.confirmDelete('vault',v.id,v.label)};
+      });
+    }
+
+    // tabs
+    const upcomingCount=active?(active.reminders||[]).filter(r=>!r.done&&new Date(r.datetime)>new Date()).length:0;
+    const tabDefs=[
+      {key:'tasks',label:'Tasks',icon:''},
+      {key:'reminders',label:'Reminders',icon:'',badge:upcomingCount,hasBadge:upcomingCount>0},
+      {key:'expenses',label:'Expenses',icon:''},
+      {key:'vault',label:'Vault',icon:''},
+    ];
+    const tabs=tabDefs.map(td=>{
+      const active2=s.activeTab===td.key;
+      return{...td,badge:td.badge||0,hasBadge:!!td.hasBadge,badgeStyle:'display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:'+activeColor+';color:#fff;font-size:11px;font-weight:900;margin-left:2px;',
+        style:'flex:1;padding:10px 4px;border:none;border-radius:14px;font-size:13px;font-weight:800;cursor:pointer;transition:all .2s;'+(active2?'background:#fff;color:'+activeColor+';box-shadow:0 2px 8px rgba(0,0,0,.1);':'background:transparent;color:#9A8F88;'),
+        onClick:()=>this.setState({activeTab:td.key})};
+    });
+    const fabColor=s.activeTab==='tasks'?accent:activeColor;
+    const fabActions={tasks:()=>this.openAdd(),reminders:()=>this.openAddReminder(),expenses:()=>this.openAddExpense(),vault:()=>this.openAddVault()};
+
+    // manage
+    const enrollProf=s.enrollProfileId?s.profiles.find(p=>p.id===s.enrollProfileId):null;
+    const unlockProf=s.unlockProfileId?s.profiles.find(p=>p.id===s.unlockProfileId):null;
+    const manageProfiles=s.profiles.map(p=>{const authOff=!!p.authDisabled;return{id:p.id,name:p.name,color:p.color,initial:(p.name[0]||'?').toUpperCase(),countLabel:p.tasks.length+' tasks, '+(p.reminders||[]).length+' reminders',faceEnrolled:!!p.faceEnrolled,faceBtnStyle:'width:42px;height:42px;border:none;border-radius:13px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;'+(p.faceEnrolled?'background:'+p.color+';color:#fff;':'background:#ECEAE7;color:#A89E96;'),onFace:()=>this.openEnroll(p.id),onDelete:()=>this.openUnlock(p.id,'delete'),
+      authOff,authStatusLabel:authOff?'On — this profile opens with no check':'Off — face / email code required to open',
+      authToggleTrackStyle:'position:relative;width:46px;height:27px;border-radius:999px;border:none;cursor:pointer;flex:none;transition:background .18s;background:'+(authOff?p.color:'#DCD2CA')+';',
+      authToggleKnobStyle:'position:absolute;top:3px;left:'+(authOff?'22px':'3px')+';width:21px;height:21px;border-radius:50%;background:#fff;transition:left .18s;box-shadow:0 1px 3px rgba(0,0,0,.25);',
+      onToggleAuth:()=>this.toggleAuth(p.id)};});
+
+    // task modal
+    const typeDefs=[['daily','Daily'],['weekly','Weekly'],['onetime','One-time']];
+    const typeOptions=typeDefs.map(([key,label])=>({label,onSelect:()=>this.setState({fType:key}),style:'flex:1;padding:10px 6px;border:none;border-radius:11px;font-size:14px;font-weight:800;cursor:pointer;transition:all .18s;'+(s.fType===key?'background:#fff;color:'+accent+';box-shadow:0 2px 6px rgba(0,0,0,.08);':'background:transparent;color:#9A8F88;')}));
+    const dayOptions=[0,1,2,3,4,5,6].map(d=>{const on=s.fDays.includes(d);return{label:this.DAY_LETTER[d],onToggle:()=>this.setState({fDays:on?s.fDays.filter(x=>x!==d):s.fDays.concat([d])}),style:'flex:1;height:40px;border-radius:11px;border:none;font-size:14px;font-weight:800;cursor:pointer;transition:all .16s;'+(on?'background:'+accent+';color:#fff;':'background:#EDE8E3;color:#9A8F88;')};});
+
+    // reminder modal
+    const methodOptions=[['notification','In-app'],['email','Email']].map(([key,label])=>({label,onSelect:()=>this.setState({fRMethod:key}),style:'flex:1;padding:10px 6px;border:none;border-radius:11px;font-size:14px;font-weight:800;cursor:pointer;transition:all .18s;'+(s.fRMethod===key?'background:#fff;color:'+activeColor+';box-shadow:0 2px 6px rgba(0,0,0,.08);':'background:transparent;color:#9A8F88;')}));
+
+    // expense modal
+    const expTypeOptions=[['expense','Expense'],['income','Income']].map(([key,label])=>({label,onSelect:()=>this.setState({fEType:key}),style:'flex:1;padding:10px 6px;border:none;border-radius:11px;font-size:14px;font-weight:800;cursor:pointer;transition:all .18s;'+(s.fEType===key?'background:#fff;color:'+(key==='income'?'#5B9A8B':'#E8694A')+';box-shadow:0 2px 6px rgba(0,0,0,.08);':'background:transparent;color:#9A8F88;')}));
+    const catOptions=this.CATS.map(c=>({label:c.label,onSelect:()=>this.setState({fECategory:c.key}),style:'padding:7px 14px;border:none;border-radius:999px;font-size:13px;font-weight:800;cursor:pointer;transition:all .16s;'+(s.fECategory===c.key?'background:'+c.color+';color:#fff;':'background:#ECEAE7;color:#7C7068;')}));
+
+    // voice expense input
+    const vListening=s.voiceListening;
+    const voiceSupported=(typeof window!=='undefined')&&!!(window.SpeechRecognition||window.webkitSpeechRecognition);
+    const voiceBtnStyle='width:100%;margin-bottom:12px;padding:11px 16px;border-radius:14px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all .2s;border:1.5px '+(vListening?'solid '+activeColor:'dashed #DCD2CA')+';background:'+(vListening?this.hexA(activeColor,.12):'#FBF6F2')+';color:'+(vListening?activeColor:'#7C7068')+';';
+    const voiceMicStyle='display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;flex:none;color:#fff;background:'+(vListening?activeColor:'#B6A99F')+';'+(vListening?'animation:pulse 1.1s ease-in-out infinite;':'');
+    const voiceBtnLabel=vListening?'Listening… tap to stop':'Tap & speak to fill';
+
+    // notif banner
+    const notifPerm=typeof Notification!=='undefined'?Notification.permission:'unavailable';
+    const showNotifBanner=(active&&(active.reminders||[]).some(r=>r.method==='notification'&&!r.done)&&notifPerm!=='granted');
+
+    return{
+      isLoading:s.loading,isLoadError:!!s.loadError&&!s.needKey,loadErrorMsg:s.loadError||'',onRetry:()=>this.retryLoad(),
+      isAuthGate:s.needKey&&!s.loading,keyVal:s.keyInput,onKeyInput:(e)=>this.setState({keyInput:e.target.value}),
+      onKeyDown:(e)=>{if(e.key==='Enter')this.submitKey();},onKeySubmit:()=>this.submitKey(),
+      keyHasError:!!s.keyError,keyError:s.keyError,keyBorder:s.keyError?'#E8A696':'#ECE0D8',keyBtnLabel:s.keyBusy?'Checking…':'Unlock Dayflow',
+      keyBtnStyle:'width:100%;padding:16px;border:none;border-radius:16px;font-size:17px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+((s.keyInput.trim()&&!s.keyBusy)?'1':'.5')+';pointer-events:'+((s.keyInput.trim()&&!s.keyBusy)?'auto':'none')+';',
+      showToast:!!s.toast,toastMsg:s.toast?s.toast.msg:'',toastIsError:!!(s.toast&&s.toast.type==='error'),toastIsSuccess:!!(s.toast&&s.toast.type!=='error'),
+      toastIconStyle:'width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:'+(s.toast&&s.toast.type==='error'?'#D2553A':'#5B9A8B')+';',
+      confirmOpen:s.confirmOpen,confirmTitle:s.confirmTitle,confirmMessage:s.confirmMessage,confirmLabel:s.confirmLabel,
+      confirmBackdropAnim:s.confirmClosing?'fadeOut .18s ease forwards':'fadeIn .2s ease both',
+      confirmCardAnim:s.confirmClosing?'fadeOut .18s ease forwards':'taskIn .22s cubic-bezier(.2,.9,.3,1.15) both',
+      onConfirmDelete:()=>this.runConfirm(),onCancelConfirm:()=>this.closeConfirm(),
+      enrollOpen:!!s.enrollProfileId,enrollName:enrollProf?enrollProf.name:'',enrollStatus:s.enrollStatus,enrollBusy:s.enrollBusy,enrollFaceEnrolled:!!(enrollProf&&enrollProf.faceEnrolled),
+      setEnrollVideo:this.setEnrollVideo,onEnrollCapture:()=>this.doEnroll(),onEnrollRemove:()=>this.removeFace(s.enrollProfileId),onEnrollClose:()=>this.closeEnroll(),
+      enrollCaptureLabel:s.enrollBusy?'Scanning…':((enrollProf&&enrollProf.faceEnrolled)?'Re-capture face':'Capture face'),
+      unlockOpen:!!s.unlockProfileId,unlockName:unlockProf?unlockProf.name:'',unlockColor:unlockProf?unlockProf.color:accent,unlockInitial:unlockProf?(unlockProf.name[0]||'?').toUpperCase():'?',
+      unlockTitle:(s.unlockPurpose==='delete'?'Delete ':s.unlockPurpose==='disableauth'?'Turn off auth — ':'Unlock ')+(unlockProf?unlockProf.name:''),unlockCanFace:!!(unlockProf&&unlockProf.faceEnrolled),
+      unlockSubtitle:s.unlockPurpose==='delete'?"Verify it's you — this permanently deletes the profile and all its data.":s.unlockPurpose==='disableauth'?"Verify it's you to turn off the face / email-code lock for this profile.":"Verify it's you to continue.",
+      unlockIsChoose:s.unlockMode==='choose',unlockIsFace:s.unlockMode==='face',unlockIsOtp:s.unlockMode==='otp',unlockBusy:s.unlockBusy,unlockStatus:s.unlockStatus,
+      setUnlockVideo:this.setUnlockVideo,otpRequested:s.otpRequested,otpNotRequested:!s.otpRequested,otpMasked:s.otpMasked,fOtp:s.fOtp,
+      onScanFace:()=>this.startFaceUnlock(),onUseCode:()=>this.startOtpUnlock(),onDoScan:()=>this.doFaceUnlock(),onSendCode:()=>this.requestOtp(),onVerifyCode:()=>this.verifyOtp(),
+      onOtpInput:(e)=>this.setState({fOtp:e.target.value}),onCloseUnlock:()=>this.closeUnlock(),onBackToChoose:()=>this.backToChoose(),
+      unlockPrimaryStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+(unlockProf?unlockProf.color:accent)+';'+(s.unlockBusy?'opacity:.6;pointer-events:none;':''),
+      fontFamily,accent,
+      isOnboarding:screen==='onboarding',isPicker:screen==='picker',isManage:screen==='manage',isProfileScreen,isTasks,isReminders,isExpenses,isVault,
+      dateLabel:this.dateLabel(),
+      obName:s.obName,obColor:s.obColor,obColors,obHeading:s.obFromManage?'Add a profile':'Welcome to Dayflow',obShowBack:s.obFromManage,
+      obEmail:s.obEmail,onObEmailInput:(e)=>this.setState({obEmail:e.target.value}),
+      onObBack:()=>this.setState({screen:'manage',obFromManage:false}),onObNameInput:(e)=>this.setState({obName:e.target.value}),onObSubmit:()=>this.submitOnboarding(),obSubmitLabel:s.obFromManage?'Add profile':'Get started',
+      obSubmitStyle:'width:100%;padding:18px;border:none;border-radius:18px;font-size:18px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+(obCan?'1':'.45')+';pointer-events:'+(obCan?'auto':'none')+';',
+      pickerProfiles,onManage:()=>this.goManage(),
+      activeName,activeColor,activeInitial,tabs,fabColor,onFABClick:fabActions[s.activeTab]||fabActions.tasks,onBack:()=>this.goBack(),
+      tasks,hasTasks,isEmpty,progCirc,progDash,progPct,progFrac,progSub,progAnim:(s.progBump%2?'popA':'popB'),heroBg,heroShadow,heroGreeting,heroHeadline,setListRef:this.setListRef,setSpendChartRef:this.setSpendChartRef,setDonutChartRef:this.setDonutChartRef,onOpenAdd:()=>this.openAdd(),
+      reminders,hasReminders,isRemindersEmpty,showNotifBanner,onRequestNotif:()=>this.enableNotifications(),
+      statIncome,statExpense,statNet,netStyle,netLabel,hasExpenseData,expenseItems,hasExpenses,isExpensesEmpty,
+      vaultItems,hasVaultItems,isVaultEmpty,vaultCountLabel,
+      manageProfiles,onAddProfile:()=>this.addProfile(),onManageBack:()=>this.goBack(),
+      modalOpen:s.modalOpen,modalTitle:s.editingId?'Edit task':'New task',sheetAnim:s.modalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',backdropAnim:s.modalClosing?'fadeOut':'fadeIn',
+      fTitle:s.fTitle,fTime:s.fTime,isWeekly:s.fType==='weekly',typeOptions,dayOptions,
+      onTitleInput:(e)=>this.setState({fTitle:e.target.value}),onTimeInput:(e)=>this.setState({fTime:e.target.value}),onCloseModal:()=>this.closeModal(),onSaveTask:()=>this.saveTask(),saveLabel:s.editingId?'Save changes':'Add task',
+      saveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+(s.fTitle.trim()?'1':'.45')+';pointer-events:'+(s.fTitle.trim()?'auto':'none')+';',
+      reminderModalOpen:s.reminderModalOpen,reminderModalTitle:s.editingReminderId?'Edit reminder':'New reminder',rSheetAnim:s.reminderModalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',rBackdropAnim:s.reminderModalClosing?'fadeOut':'fadeIn',
+      fRTitle:s.fRTitle,fRDatetime:s.fRDatetime,isEmailMethod:s.fRMethod==='email',fREmail:s.fREmail,methodOptions,
+      onRTitleInput:(e)=>this.setState({fRTitle:e.target.value}),onRDatetimeInput:(e)=>this.setState({fRDatetime:e.target.value}),onREmailInput:(e)=>this.setState({fREmail:e.target.value}),onCloseReminderModal:()=>this.closeReminderModal(),onSaveReminder:()=>this.saveReminder(),rSaveLabel:s.editingReminderId?'Save changes':'Set reminder',
+      rSaveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+activeColor+';opacity:'+(s.fRTitle.trim()&&s.fRDatetime?'1':'.45')+';pointer-events:'+(s.fRTitle.trim()&&s.fRDatetime?'auto':'none')+';',
+      expenseModalOpen:s.expenseModalOpen,expenseModalTitle:s.editingExpenseId?'Edit transaction':'Log transaction',eSheetAnim:s.expenseModalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',eBackdropAnim:s.expenseModalClosing?'fadeOut':'fadeIn',
+      fETitle:s.fETitle,fEAmount:s.fEAmount,fEDate:s.fEDate,isExpenseType:s.fEType==='expense',expTypeOptions,catOptions,
+      voiceSupported,voiceBtnStyle,voiceMicStyle,voiceBtnLabel,onVoiceExpense:()=>(s.voiceListening?this.stopVoice():this.startVoiceExpense()),
+      onETitleInput:(e)=>this.setState({fETitle:e.target.value}),onEAmountInput:(e)=>this.setState({fEAmount:e.target.value}),onEDateInput:(e)=>this.setState({fEDate:e.target.value}),onCloseExpenseModal:()=>this.closeExpenseModal(),onSaveExpense:()=>this.saveExpense(),eSaveLabel:s.editingExpenseId?'Save changes':'Log it',
+      eSaveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+activeColor+';opacity:'+(s.fETitle.trim()&&s.fEAmount?'1':'.45')+';pointer-events:'+(s.fETitle.trim()&&s.fEAmount?'auto':'none')+';',
+      vaultModalOpen:s.vaultModalOpen,vaultModalTitle:s.editingVaultId?'Edit credential':'New credential',vaultSheetAnim:s.vaultModalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',vaultBackdropAnim:s.vaultModalClosing?'fadeOut':'fadeIn',
+      fVaultLabel:s.fVaultLabel,fVaultUser:s.fVaultUser,fVaultPass:s.fVaultPass,fVaultNotes:s.fVaultNotes,showVaultPass:s.showVaultPass,hideVaultPass:!s.showVaultPass,vaultPassInputType:s.showVaultPass?'text':'password',
+      onVaultLabelInput:(e)=>this.setState({fVaultLabel:e.target.value}),onVaultUserInput:(e)=>this.setState({fVaultUser:e.target.value}),onVaultPassInput:(e)=>this.setState({fVaultPass:e.target.value}),onVaultNotesInput:(e)=>this.setState({fVaultNotes:e.target.value}),onToggleVaultPass:()=>this.setState({showVaultPass:!s.showVaultPass}),onCloseVaultModal:()=>this.closeVaultModal(),onSaveVault:()=>this.saveVault(),vaultSaveLabel:s.editingVaultId?'Save changes':'Add credential',
+      vaultSaveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+activeColor+';opacity:'+(s.fVaultLabel.trim()?'1':'.45')+';pointer-events:'+(s.fVaultLabel.trim()?'auto':'none')+';',
+    };
+  }
+}
+</script>
+</body>
+</html>

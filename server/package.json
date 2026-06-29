@@ -1,0 +1,30 @@
+{
+  "name": "dayflow-server",
+  "version": "1.0.0",
+  "description": "Postgres-backed REST API for the Dayflow app",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "seed": "node scripts/seed.js",
+    "keygen": "node scripts/keygen.js",
+    "vapid": "node scripts/vapid.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "nodemailer": "^9.0.1",
+    "pg": "^8.13.1",
+    "web-push": "^3.6.7"
+  }
+}
