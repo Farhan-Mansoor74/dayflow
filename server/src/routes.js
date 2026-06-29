@@ -148,13 +148,15 @@ router.post('/auth', authLimiter, h(async (req, res) => {
 // Reminder cron tick — called by an external scheduler (e.g. cron-job.org) on
 // serverless hosts where there's no always-on process. Protected by CRON_SECRET.
 // ===========================================================================
-router.all('/cron/run', h(async (req, res) => {
-  const secret = process.env.CRON_SECRET || '';
-  const provided = (req.get('x-cron-key') || (req.query && req.query.key) || '').toString();
-  if (!secret || !safeEqual(provided, secret)) return res.status(401).json({ error: 'unauthorized' });
-  const result = await tick();
-  res.json({ ok: true, ...(result || {}) });
-}));
+['GET', 'POST'].forEach(method => {
+  router[method.toLowerCase()]('/cron/run', h(async (req, res) => {
+    const secret = process.env.CRON_SECRET || '';
+    const provided = (req.get('x-cron-key') || (req.query && req.query.key) || '').toString();
+    if (!secret || !safeEqual(provided, secret)) return res.status(401).json({ error: 'unauthorized' });
+    const result = await tick();
+    res.json({ ok: true, ...(result || {}) });
+  }));
+});
 
 // ---- Everything past here is gated by a valid session token ----------------
 router.use(requireAuth);
