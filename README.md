@@ -1,74 +1,112 @@
 # Dayflow
 
-A tablet-friendly personal organizer with per-person profiles. Each profile has four tabs:
+A simple, shared organizer for a household or small team. Everyone gets their own
+profile on the same device — and each person's tasks, reminders, expenses and
+passwords stay separate.
 
-- **Tasks** — daily / weekly / one-time tasks with a progress ring, drag-to-reorder, and a daily auto-reset.
-- **Reminders** — date/time reminders delivered for real by the backend scheduler: **email** (via SMTP) or **Web Push** notifications that arrive even when the app is closed. Status shown as upcoming / due soon / overdue / done. See [`server/README.md`](server/README.md#reminders-email--web-push) for setup.
-- **Expenses** — income & expense logging (including **voice input** — tap the mic and say e.g. "twelve dollars on coffee" to auto-fill amount, description, category & type), monthly totals, a 30-day spending-trend chart (ApexCharts), and an interactive spending-by-category donut. Voice uses the browser Web Speech API (Chrome/Edge, needs mic permission + internet).
-- **Vault** — stored credentials (label, username, password with reveal toggle, notes).
+It runs in any modern browser and can be **installed like a real app** on your
+phone, tablet, or computer.
 
-Each profile has a **required email** (used for reminders + login codes) and optional **Face Unlock**:
-set it up on the Manage screen (camera + on-device face descriptor, stored encrypted server-side). A
-profile with face unlock becomes **gated** — opening it requires a **face scan** (matched server-side)
-or an **emailed 6-digit code** as the fallback. Face match has no liveness detection (a photo can fool
-it), so the email code is the strong factor; profiles without face unlock open normally.
-**Deleting a profile is always gated** — it requires the same identity check (face scan if
-enrolled, otherwise the emailed code), so only the profile's owner can remove it and its data.
+## What you can do
 
-## Installable (PWA)
+- **📋 Tasks** — plan your day with daily, weekly, or one-off tasks. Tick them off
+  to fill your progress ring, drag to reorder, and everything recurring resets
+  automatically each morning.
+- **⏰ Reminders** — pick a date and time and choose how you're reminded: an
+  **email**, or a **push notification** that still arrives when the app is closed.
+- **💸 Expenses** — track income and spending. Type it in, or just **say it** —
+  tap the mic and speak *"twelve dollars on coffee"* and it fills in the rest.
+  See monthly totals, a spending trend, and a breakdown by category.
+- **🔒 Vault** — keep passwords and notes safe. They're encrypted, with a tap to
+  reveal.
+- **👤 Profiles** — one per person, each with its own colour and data. Lock a
+  profile with **Face Unlock** or an **emailed code** so only its owner can open
+  or delete it.
 
-Dayflow is a Progressive Web App — open it in Chrome/Edge and use "Install app" (or Add to Home
-Screen on mobile) to run it fullscreen like a native app. Provided by `manifest.webmanifest`, the
-icons in `assets/`, and the `sw.js` service worker (which also caches the app shell for basic offline
-use and delivers reminder push notifications). Requires a secure context — `http://localhost` works;
-a LAN IP/domain needs HTTPS. The camera (face unlock) and Web Speech (voice) also require that.
+## Getting started (using the app)
 
-Data is stored in **Postgres** via the REST API in [`server/`](server/). The
-frontend loads all profiles/tasks/reminders/expenses/vault from the API on
-startup and writes every change back through it (optimistic UI — changes show
-instantly and sync in the background; a toast appears and the view re-syncs if a
-call fails). The one thing still kept in the browser is a `localStorage` marker
-(`dayflow_lastReset`) used to run the once-a-day task reset.
+1. **Open the app** in your browser (Chrome or Edge work best) and, if you like,
+   choose **Install app** / **Add to Home Screen** to run it fullscreen.
+2. **Create a profile** — enter a name, pick a colour, and add an email. The email
+   is used for reminders and login codes, so use a real one.
+3. **Add your first task** with the **+** button, then explore the Reminders,
+   Expenses, and Vault tabs along the top.
+4. **(Optional) Lock your profile** from the **Manage** screen if you want a
+   face scan or emailed code required to open it. Profiles without a lock open
+   straight away.
 
-The API base URL defaults to `http://localhost:3001/api`; override it by setting
-`window.DAYFLOW_API_BASE` before `support.js` loads, if you host the API
-elsewhere.
+That's it — everything you add is saved automatically.
 
-## Running
+## Good to know
 
-You need **two things running**: the API server and a static server for this
-frontend. The frontend must be served over HTTP (not `file://`) and from an
-origin the API allows via CORS (default: `http://localhost:8000`).
+- **Locking a profile is real.** A locked profile's passwords can't be opened,
+  and the profile can't be edited or deleted, until you unlock it with a face
+  scan or an emailed code. If you close and reopen the app, you'll be asked to
+  unlock again.
+- **Face unlock isn't foolproof** — it has no "liveness" check, so a photo could
+  fool it. The emailed code is the strong fallback and is always available.
+- **Notifications & camera** need permission the first time, and require a secure
+  connection (`https://`, or `http://localhost` during development).
+
+---
+
+## Running it yourself (technical)
+
+Dayflow has two parts: a small **REST API** (Node/Express + Postgres) in
+[`server/`](server/), and this **static web app** at the project root. You need
+both running. The web app must be served over HTTP (not opened as a `file://`).
 
 ```sh
-# 1) start the backend (see server/README.md for first-time DB setup)
-cd server && npm start            # http://localhost:3001
+# 1) Backend — one-time database setup, then start it
+cd server
+npm install
+npm run migrate         # creates/updates the Postgres tables (safe to re-run)
+npm start               # → http://localhost:3001
 
-# 2) in another terminal, serve the frontend from this folder on port 8000
-python -m http.server 8000        # or: npx serve . -l 8000
+# 2) Frontend — in another terminal, from the project root
+python -m http.server 8000     # or: npx serve . -l 8000
 ```
 
-Then open http://localhost:8000. If the API isn't running you'll see a
-"Can't reach the server" screen with a Retry button.
+Then open **http://localhost:8000**. See [`server/README.md`](server/README.md)
+for database, email (SMTP), and Web Push setup.
 
-## Structure
+### Configuration
 
-- `index.html` — the entire app: the `<x-dc>` view template plus the component logic
-  (`class Component extends DCLogic`), originally generated from the Claude Design source
-  `Dayflow.dc.html`. The component's data layer has been rewired from `localStorage` to the
-  REST API (`api()` / `loadFromServer()` / per-mutation `fetch` calls); the view/template
-  layer is unchanged.
-- `support.js` — the self-contained Claude Design runtime (vendored). It loads React/ReactDOM
-  from unpkg, compiles the `<x-dc>` template, and mounts the component on page load.
-- **ApexCharts** is loaded from a CDN (`<head>`) and mounted imperatively into a ref'd container
-  for the Expenses "Spending Trend" area chart (`renderSpendChart()` in `index.html`).
-- `sw.js` — service worker that displays reminder **Web Push** notifications (registered by
-  `index.html` when the user enables notifications).
+Secrets live in `server/.env` (never committed). Key ones:
 
-## Assets & branding
+- `DATABASE_URL` — Postgres connection string.
+- `APP_ACCESS_KEY` — shared key that gates the whole API. When set, a device
+  unlocks once and gets a 30-day session.
+- `VAULT_KEY` — 32-byte key that encrypts vault passwords at rest (`npm run keygen`).
+- `CRON_SECRET`, `VAPID_*`, `SMTP_*` — for reminders (cron, Web Push, email).
 
-- `assets/bg.png` — background illustration on the profile-picker screen. A subtle top-down
-  dark scrim is layered over it (in `index.html`) so the white heading stays readable.
-- `assets/logo.svg` — the Dayflow logo, shown in place of the old "Dayflow" wordmark on the
-  onboarding and picker screens.
-- The app font is **Sora** (set as the `font` prop default and the runtime fallback in `index.html`).
+The web app calls the API at `http://localhost:3001/api` by default; override it
+by setting `window.DAYFLOW_API_BASE` before `support.js` loads (e.g. when the API
+is hosted elsewhere, such as a Vercel deployment where it lives at `/api`).
+
+### How it fits together
+
+- **`index.html`** — the whole web app: a view template plus the component logic
+  (`class Component extends DCLogic`). Its data layer talks to the REST API.
+- **`support.js`** — the vendored runtime that compiles the template and mounts
+  the app (loads React with Subresource-Integrity pinning).
+- **`sw.js`** — service worker: installable/offline app shell and reminder push
+  notifications. (It never caches API calls, so your data is always fresh.)
+- **Charts** use ApexCharts and **face matching** uses face-api, both loaded from
+  a CDN with integrity hashes.
+- **Data** lives in Postgres; the browser only keeps a tiny marker for the
+  once-a-day task reset.
+
+### Security notes
+
+- The per-profile lock is enforced **server-side**: opening a locked profile's
+  vault, or editing/deleting it, requires a short-lived token minted only by a
+  successful face match or emailed code.
+- Passwords are encrypted with AES-256-GCM; login codes are stored hashed; the
+  access-key check and code endpoints are rate-limited.
+
+### Assets
+
+- `assets/bg.png` — profile-picker background. `assets/logo.svg` — the Dayflow
+  logo. The app font is **Sora**.
+</content>

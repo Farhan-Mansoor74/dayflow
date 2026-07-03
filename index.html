@@ -11,8 +11,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Dayflow">
 <script src="./support.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.54.1/dist/apexcharts.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.54.1/dist/apexcharts.min.js" integrity="sha384-KNaFJ+EK516RuHsoycvreec5pD7BkTKJEkjMrVSQWu9KGTl7En4dhIDv7t1DFJ+g" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.js" integrity="sha384-5SEinnOIOK1Nl6bzEIWwfXWMg4EaJhN2bXKgrjYC0Bq+fYNZHwhD3ntM92lTHnfL" crossorigin="anonymous"></script>
 </head>
 <body>
 <x-dc>
@@ -165,9 +165,6 @@
         </sc-for>
       </div>
     </div>
-    <div title="Farhan" style="position:fixed; bottom:calc(12px + env(safe-area-inset-bottom)); right:18px; z-index:40; width:58px; height:58px; display:flex; align-items:center; justify-content:center; overflow:hidden; pointer-events:none;">
-      <img src="./assets/farhan-logo.png" alt="Farhan" style="width:100%; height:100%; object-fit:contain; transform:scale(1.32);" />
-    </div>
   </div>
   </sc-if>
 
@@ -264,7 +261,7 @@
           </div>
           <div style="color:#fff; min-width:0;">
             <div style="font-size:12px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; opacity:.85;">{{ heroGreeting }}</div>
-            <div style="display:inline-block; white-space:nowrap; font-size:27px; font-weight:900; letter-spacing:-.02em; margin-top:2px; animation:{{ progAnim }} .35s cubic-bezier(.34,1.56,.64,1);">{{ heroHeadline }}</div>
+            <div style="overflow-wrap:break-word; font-size:27px; font-weight:900; line-height:1.1; letter-spacing:-.02em; margin-top:2px; animation:{{ progAnim }} .35s cubic-bezier(.34,1.56,.64,1);">{{ heroHeadline }}</div>
             <div style="font-size:14px; font-weight:700; opacity:.92; margin-top:3px;">{{ progFrac }} done · {{ progSub }}</div>
           </div>
         </div>
@@ -864,6 +861,10 @@ class Component extends DCLogic {
 
   // ---- API data layer --------------------------------------------------
   SESSION_KEY = 'dayflow_session';
+  // Per-profile unlock tokens (pid -> token), minted server-side on face/OTP
+  // unlock. Kept in memory only, so a locked profile must be unlocked again
+  // after a reload — that's the intended behaviour for a locked profile.
+  profileTokens = {};
   loadSession(){
     try{const s=JSON.parse(localStorage.getItem(this.SESSION_KEY)||'null');
       if(s&&s.token&&(!s.exp||s.exp>Date.now()))return s;}catch(e){}
@@ -871,10 +872,11 @@ class Component extends DCLogic {
   }
   saveSession(token,expiresAt){this.authToken=token;try{localStorage.setItem(this.SESSION_KEY,JSON.stringify({token,exp:expiresAt||0}));}catch(e){}}
   clearSession(){this.authToken=null;try{localStorage.removeItem(this.SESSION_KEY);}catch(e){}}
-  api(method,path,body){
+  api(method,path,body,pid){
     const headers={};
     if(body)headers['Content-Type']='application/json';
     if(this.authToken)headers['Authorization']='Bearer '+this.authToken;
+    if(pid&&this.profileTokens[pid])headers['X-Profile-Token']=this.profileTokens[pid];
     return fetch(this.API+path,{method,headers,body:body?JSON.stringify(body):undefined})
       .then(async res=>{
         if(res.status===204)return null;
@@ -895,18 +897,29 @@ class Component extends DCLogic {
   async loadFromServer(){
     const profiles=await this.api('GET','/profiles');
     return Promise.all(profiles.map(async p=>{
+      const open=!!p.authDisabled; // "open" profiles need no unlock; locked ones load their vault later
       const [tasks,reminders,expenses,vault]=await Promise.all([
         this.api('GET','/profiles/'+p.id+'/tasks'),
         this.api('GET','/profiles/'+p.id+'/reminders'),
         this.api('GET','/profiles/'+p.id+'/expenses'),
-        this.api('GET','/profiles/'+p.id+'/vault').catch(()=>[]),
+        open?this.api('GET','/profiles/'+p.id+'/vault',null,p.id).catch(()=>[]):Promise.resolve(null),
       ]);
-      return {id:p.id,name:p.name,color:p.color,email:p.email||'',faceEnrolled:!!p.faceEnrolled,authDisabled:!!p.authDisabled,
+      return {id:p.id,name:p.name,color:p.color,email:p.email||'',faceEnrolled:!!p.faceEnrolled,authDisabled:open,
         tasks:tasks.map(t=>this.mapTask(t)),
         reminders:reminders.map(r=>this.mapReminder(r)),
         expenses:expenses.map(e=>this.mapExpense(e)),
-        vault:vault.map(v=>this.mapVault(v))};
+        vault:vault?vault.map(v=>this.mapVault(v)):[],
+        vaultLoaded:!!vault}; // locked profile's vault stays unloaded until unlock
     }));
+  }
+  // Fetch a just-unlocked (locked) profile's vault with its profile token, then open it.
+  loadLockedProfile(id){
+    const p=this.state.profiles.find(x=>x.id===id);
+    if(!p||p.vaultLoaded){this.openProfile(id);return;}
+    this.api('GET','/profiles/'+id+'/vault',null,id).catch(()=>[]).then(vault=>{
+      const profiles=this.state.profiles.map(x=>x.id===id?Object.assign({},x,{vault:vault.map(v=>this.mapVault(v)),vaultLoaded:true}):x);
+      this.setState({profiles});this.openProfile(id);
+    }).catch(e=>{if(!this.handleAuthError(e))this.toast('Could not open profile: '+e.message,'error');});
   }
   // Reset recurring tasks once per calendar day (mirrors the old local logic).
   // First-ever load just records the marker; it does not wipe seeded state.
@@ -995,15 +1008,17 @@ class Component extends DCLogic {
 
   isEmail(s){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((s||'').trim());}
   submitOnboarding(){
+    if(this.state.obBusy)return; // guard against double-tap creating duplicate profiles
     const name=this.state.obName.trim();const email=this.state.obEmail.trim();
     if(!name||!this.isEmail(email))return;
     const color=this.state.obColor;const fromManage=this.state.obFromManage;
+    this.setState({obBusy:true});
     this.api('POST','/profiles',{name,color,email}).then(p=>{
       const prof={id:p.id,name:p.name,color:p.color,email:p.email,faceEnrolled:false,tasks:[],vault:[],reminders:[],expenses:[]};
       const profiles=this.state.profiles.concat([prof]);
-      this.setState({profiles,obName:'',obEmail:'',obColor:this.avatarColors[0],screen:fromManage?'manage':'picker',obFromManage:false});
+      this.setState({profiles,obName:'',obEmail:'',obColor:this.avatarColors[0],screen:fromManage?'manage':'picker',obFromManage:false,obBusy:false});
       this.toast('Profile created');
-    }).catch(e=>this.toast('Could not create profile: '+e.message,'error'));
+    }).catch(e=>{this.setState({obBusy:false});this.toast('Could not create profile: '+e.message,'error');});
   }
 
   toggleTask(id){
@@ -1056,11 +1071,11 @@ class Component extends DCLogic {
     }
   }
 
-  addProfile(){this.setState({screen:'onboarding',obFromManage:true,obName:'',obEmail:'',obColor:this.avatarColors[this.state.profiles.length%this.avatarColors.length]});}
+  addProfile(){this.setState({screen:'onboarding',obFromManage:true,obName:'',obEmail:'',obBusy:false,obColor:this.avatarColors[this.state.profiles.length%this.avatarColors.length]});}
   deleteProfile(id){
     const profiles=this.state.profiles.filter(p=>p.id!==id);
     this.setState({profiles,screen:profiles.length?'manage':'onboarding',obFromManage:false});
-    this.api('DELETE','/profiles/'+id).then(()=>this.toast('Profile deleted')).catch(e=>this.syncFail(e));
+    this.api('DELETE','/profiles/'+id,null,id).then(()=>this.toast('Profile deleted')).catch(e=>this.syncFail(e));
   }
 
   openAddVault(){this.setState({vaultModalOpen:true,vaultModalClosing:false,editingVaultId:null,fVaultLabel:'',fVaultUser:'',fVaultPass:'',fVaultNotes:'',showVaultPass:false});}
@@ -1074,7 +1089,7 @@ class Component extends DCLogic {
     const editing=this.state.editingVaultId;const pid=this.state.activeId;
     const body={label,username:this.state.fVaultUser,password:this.state.fVaultPass,notes:this.state.fVaultNotes};
     this.closeVaultModal();
-    const req=editing?this.api('PATCH','/vault/'+editing,body):this.api('POST','/profiles/'+pid+'/vault',body);
+    const req=editing?this.api('PATCH','/vault/'+editing,body,pid):this.api('POST','/profiles/'+pid+'/vault',body,pid);
     req.then(v=>{
       const item=this.mapVault(v);
       const profiles=this.state.profiles.map(p=>{
@@ -1088,9 +1103,10 @@ class Component extends DCLogic {
     }).catch(e=>this.syncFail(e));
   }
   deleteVaultItem(id){
-    const profiles=this.state.profiles.map(p=>{if(p.id!==this.state.activeId)return p;return Object.assign({},p,{vault:(p.vault||[]).filter(v=>v.id!==id)});});
+    const pid=this.state.activeId;
+    const profiles=this.state.profiles.map(p=>{if(p.id!==pid)return p;return Object.assign({},p,{vault:(p.vault||[]).filter(v=>v.id!==id)});});
     this.setState({profiles});
-    this.api('DELETE','/vault/'+id).then(()=>this.toast('Credential deleted')).catch(e=>this.syncFail(e));
+    this.api('DELETE','/vault/'+id,null,pid).then(()=>this.toast('Credential deleted')).catch(e=>this.syncFail(e));
   }
   toggleVaultReveal(id){const ids=this.state.vaultRevealedIds;this.setState({vaultRevealedIds:ids.includes(id)?ids.filter(x=>x!==id):ids.concat([id])});}
 
@@ -1197,6 +1213,8 @@ class Component extends DCLogic {
 
   // enrollment (Manage screen)
   openEnroll(id){this.setState({enrollProfileId:id,enrollBusy:false,enrollStatus:'Center your face in the frame, then capture.'});}
+  // Enrolling/removing a face is a sensitive change: a locked profile must be unlocked first.
+  faceAction(id){const p=this.state.profiles.find(x=>x.id===id);if(p&&!p.authDisabled&&!this.profileTokens[id])this.openUnlock(id,'enroll');else this.openEnroll(id);}
   closeEnroll(){this.stopCamera();this.setState({enrollProfileId:null,enrollBusy:false});}
   setEnrollVideo=(el)=>{if(el){this._enrollVideo=el;this.startCamera(el).catch(e=>this.setState({enrollStatus:'Camera unavailable: '+(e.message||e.name)}));}else{this._enrollVideo=null;}};
   async doEnroll(){
@@ -1205,24 +1223,24 @@ class Component extends DCLogic {
     try{
       const desc=await this.captureDescriptor(video);
       if(!desc){this.setState({enrollBusy:false,enrollStatus:'No face detected — face the camera in good light and try again.'});return;}
-      await this.api('POST','/profiles/'+id+'/face',{descriptor:desc});
+      await this.api('POST','/profiles/'+id+'/face',{descriptor:desc},id);
       const profiles=this.state.profiles.map(p=>p.id===id?Object.assign({},p,{faceEnrolled:true}):p);
       this.setState({profiles});this.toast('Face unlock enabled');this.closeEnroll();
     }catch(e){this.setState({enrollBusy:false,enrollStatus:'Error: '+(e.message||'try again')});}
   }
   async removeFace(id){
-    try{await this.api('DELETE','/profiles/'+id+'/face');const profiles=this.state.profiles.map(p=>p.id===id?Object.assign({},p,{faceEnrolled:false}):p);this.setState({profiles});this.toast('Face unlock removed');this.closeEnroll();}
+    try{await this.api('DELETE','/profiles/'+id+'/face',null,id);const profiles=this.state.profiles.map(p=>p.id===id?Object.assign({},p,{faceEnrolled:false}):p);this.setState({profiles});this.toast('Face unlock removed');this.closeEnroll();}
     catch(e){this.toast('Could not remove: '+e.message,'error');}
   }
 
   // gate unlock (picker)
   openUnlock(id,purpose){this.setState({unlockProfileId:id,unlockPurpose:purpose||'open',unlockMode:'choose',unlockBusy:false,unlockStatus:'',fOtp:'',otpMasked:'',otpRequested:false});}
   closeUnlock(){this.stopCamera();this.setState({unlockProfileId:null,unlockBusy:false,otpRequested:false,fOtp:''});}
-  unlockSuccess(){const id=this.state.unlockProfileId;const purpose=this.state.unlockPurpose;this.stopCamera();this.setState({unlockProfileId:null,otpRequested:false,fOtp:''});if(purpose==='delete')this.deleteProfile(id);else if(purpose==='disableauth')this.setAuthDisabled(id,true);else this.openProfile(id);}
+  unlockSuccess(){const id=this.state.unlockProfileId;const purpose=this.state.unlockPurpose;this.stopCamera();this.setState({unlockProfileId:null,otpRequested:false,fOtp:''});if(purpose==='delete')this.deleteProfile(id);else if(purpose==='disableauth')this.setAuthDisabled(id,true);else if(purpose==='enroll')this.openEnroll(id);else this.loadLockedProfile(id);}
   setAuthDisabled(id,val){
     const profiles=this.state.profiles.map(p=>p.id===id?{...p,authDisabled:val}:p);
     this.setState({profiles});
-    this.api('PATCH','/profiles/'+id,{authDisabled:val}).then(()=>this.toast(val?'Authentication turned off':'Authentication turned on')).catch(e=>this.syncFail(e));
+    this.api('PATCH','/profiles/'+id,{authDisabled:val},id).then(()=>{if(val)delete this.profileTokens[id];this.toast(val?'Authentication turned off':'Authentication turned on');}).catch(e=>this.syncFail(e));
   }
   toggleAuth(id){const p=this.state.profiles.find(x=>x.id===id);if(!p)return;if(p.authDisabled)this.setAuthDisabled(id,false);else this.openUnlock(id,'disableauth');}
   setUnlockVideo=(el)=>{if(el){this._unlockVideo=el;this.startCamera(el).catch(e=>this.setState({unlockStatus:'Camera unavailable: '+(e.message||e.name)}));}else{this._unlockVideo=null;}};
@@ -1235,7 +1253,7 @@ class Component extends DCLogic {
       const desc=await this.captureDescriptor(video);
       if(!desc){this.setState({unlockBusy:false,unlockStatus:'No face detected — try again.'});return;}
       const res=await this.api('POST','/face/match',{descriptor:desc});
-      if(res&&res.matched&&res.profileId===id){if(this.state.unlockPurpose==='open')this.toast('Welcome back!');this.unlockSuccess();}
+      if(res&&res.matched&&res.profileId===id){if(res.profileToken)this.profileTokens[id]=res.profileToken;if(this.state.unlockPurpose==='open')this.toast('Welcome back!');this.unlockSuccess();}
       else this.setState({unlockBusy:false,unlockStatus:(res&&res.matched)?'That matched a different profile.':'Not recognized — try again or use an email code.'});
     }catch(e){this.setState({unlockBusy:false,unlockStatus:'Error: '+(e.message||'try again')});}
   }
@@ -1250,7 +1268,7 @@ class Component extends DCLogic {
     const id=this.state.unlockProfileId;const code=this.state.fOtp.trim();
     if(!/^\d{4,8}$/.test(code)||this.state.unlockBusy)return;
     this.setState({unlockBusy:true});
-    try{const r=await this.api('POST','/profiles/'+id+'/otp/verify',{code});if(r&&r.verified){if(this.state.unlockPurpose==='open')this.toast('Unlocked');this.unlockSuccess();}else{this.setState({unlockBusy:false});this.toast('Incorrect code','error');}}
+    try{const r=await this.api('POST','/profiles/'+id+'/otp/verify',{code});if(r&&r.verified){if(r.profileToken)this.profileTokens[id]=r.profileToken;if(this.state.unlockPurpose==='open')this.toast('Unlocked');this.unlockSuccess();}else{this.setState({unlockBusy:false});this.toast('Incorrect code','error');}}
     catch(e){this.setState({unlockBusy:false});this.toast(e.message||'Verification failed','error');}
   }
 
@@ -1487,7 +1505,7 @@ class Component extends DCLogic {
 
     // onboarding
     const obColors=this.avatarColors.map(c=>({color:c,active:c===s.obColor,onSelect:()=>this.setState({obColor:c}),style:'width:52px;height:52px;border-radius:50%;border:'+(c===s.obColor?'3px solid #2E2A27':'3px solid transparent')+';background:'+c+';cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s,border-color .15s;box-shadow:0 2px 6px rgba(80,50,30,.12);'}));
-    const obCan=s.obName.trim().length>0&&this.isEmail(s.obEmail);
+    const obCan=s.obName.trim().length>0&&this.isEmail(s.obEmail)&&!s.obBusy;
 
     // picker
     const pickerProfiles=s.profiles.map(p=>{const pr=this.progress(p);const circ=2*Math.PI*12;const gated=!p.authDisabled;return{id:p.id,name:p.name,color:p.color,initial:(p.name[0]||'?').toUpperCase(),fracLabel:pr.done+' / '+pr.total+' done',circ,dash:circ*(1-pr.pct),locked:gated,onOpen:(gated?(()=>this.openUnlock(p.id)):(()=>this.openProfile(p.id)))};});
@@ -1612,7 +1630,7 @@ class Component extends DCLogic {
     // manage
     const enrollProf=s.enrollProfileId?s.profiles.find(p=>p.id===s.enrollProfileId):null;
     const unlockProf=s.unlockProfileId?s.profiles.find(p=>p.id===s.unlockProfileId):null;
-    const manageProfiles=s.profiles.map(p=>{const authOff=!!p.authDisabled;return{id:p.id,name:p.name,color:p.color,initial:(p.name[0]||'?').toUpperCase(),countLabel:p.tasks.length+' tasks, '+(p.reminders||[]).length+' reminders',faceEnrolled:!!p.faceEnrolled,faceBtnStyle:'width:42px;height:42px;border:none;border-radius:13px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;'+(p.faceEnrolled?'background:'+p.color+';color:#fff;':'background:#ECEAE7;color:#A89E96;'),onFace:()=>this.openEnroll(p.id),onDelete:()=>this.openUnlock(p.id,'delete'),
+    const manageProfiles=s.profiles.map(p=>{const authOff=!!p.authDisabled;return{id:p.id,name:p.name,color:p.color,initial:(p.name[0]||'?').toUpperCase(),countLabel:p.tasks.length+' tasks, '+(p.reminders||[]).length+' reminders',faceEnrolled:!!p.faceEnrolled,faceBtnStyle:'width:42px;height:42px;border:none;border-radius:13px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;'+(p.faceEnrolled?'background:'+p.color+';color:#fff;':'background:#ECEAE7;color:#A89E96;'),onFace:()=>this.faceAction(p.id),onDelete:()=>this.openUnlock(p.id,'delete'),
       authOff,authStatusLabel:authOff?'On — this profile opens with no check':'Off — face / email code required to open',
       authToggleTrackStyle:'position:relative;width:46px;height:27px;border-radius:999px;border:none;cursor:pointer;flex:none;transition:background .18s;background:'+(authOff?p.color:'#DCD2CA')+';',
       authToggleKnobStyle:'position:absolute;top:3px;left:'+(authOff?'22px':'3px')+';width:21px;height:21px;border-radius:50%;background:#fff;transition:left .18s;box-shadow:0 1px 3px rgba(0,0,0,.25);',

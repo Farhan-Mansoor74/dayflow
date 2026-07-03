@@ -15,6 +15,13 @@ const crypto = require('crypto');
 const SESSION_DAYS = Number(process.env.SESSION_DAYS) || 30;
 const SESSION_MS = SESSION_DAYS * 24 * 60 * 60 * 1000;
 
+// A profile "unlock" (face match or emailed code) mints a short-lived token
+// scoped to that one profile. Sensitive profile operations (vault, profile
+// edit/delete, face enrollment) require it server-side, so a locked profile
+// cannot be read or changed with the household key alone.
+const PROFILE_TOKEN_MIN = Number(process.env.PROFILE_TOKEN_MIN) || 30;
+const PROFILE_TOKEN_MS = PROFILE_TOKEN_MIN * 60 * 1000;
+
 function accessKey() {
   return process.env.APP_ACCESS_KEY || '';
 }
@@ -74,6 +81,28 @@ function verifyToken(token) {
   }
 }
 
+// ---- Per-profile unlock tokens (domain-separated from session tokens) ------
+function issueProfileToken(profileId) {
+  const payload = { pid: String(profileId), exp: Date.now() + PROFILE_TOKEN_MS };
+  const body = b64url(JSON.stringify(payload));
+  const sig = b64url(hmac('profile:' + body)); // prefix keeps these distinct from session tokens
+  return { token: `${body}.${sig}`, expiresAt: payload.exp };
+}
+
+function verifyProfileToken(token, profileId) {
+  if (typeof token !== 'string' || !token.includes('.')) return false;
+  const [body, sig] = token.split('.');
+  if (!body || !sig) return false;
+  if (!safeEqual(sig, b64url(hmac('profile:' + body)))) return false;
+  try {
+    const payload = JSON.parse(fromB64url(body).toString('utf8'));
+    return !!payload && payload.pid === String(profileId)
+      && typeof payload.exp === 'number' && payload.exp > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 // Express middleware — requires a valid Bearer session token. No-op when the
 // gate is disabled (no key configured).
 function requireAuth(req, res, next) {
@@ -84,4 +113,4 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ error: 'authentication required' });
 }
 
-module.exports = { SESSION_DAYS, authEnabled, checkKey, issueToken, verifyToken, requireAuth };
+module.exports = { SESSION_DAYS, authEnabled, checkKey, issueToken, verifyToken, requireAuth, issueProfileToken, verifyProfileToken };

@@ -5,7 +5,7 @@ const { encrypt, decrypt, vaultEnabled } = require('./crypto');
 const { saveSubscription, deleteSubscription, pushEnabled } = require('./push');
 const { THRESHOLD, encodeDescriptor, decodeDescriptor, distance } = require('./face');
 const { TTL_MS, MAX_ATTEMPTS, generateCode, hashCode, safeEqual, maskEmail, emailCode } = require('./otp');
-const { authEnabled, checkKey, issueToken, requireAuth } = require('./auth');
+const { authEnabled, checkKey, issueToken, requireAuth, issueProfileToken, verifyProfileToken } = require('./auth');
 const { tick } = require('./scheduler');
 
 // Never expose face_descriptor / otp_* columns to clients.
@@ -32,6 +32,17 @@ const otpRequestLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many code requests — try again later.' },
+});
+
+// Cap code-verification attempts per profile (defence-in-depth on top of the
+// per-code MAX_ATTEMPTS counter, which resets whenever a new code is requested).
+const otpVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  keyGenerator: (req) => 'otpv:' + (req.params.id || req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts — try again later.' },
 });
 const v = require('./validate');
 
@@ -161,6 +172,29 @@ router.post('/auth', authLimiter, h(async (req, res) => {
 // ---- Everything past here is gated by a valid session token ----------------
 router.use(requireAuth);
 
+// Per-profile lock enforcement. A profile with auth_disabled = true is "open"
+// and needs no extra check. A locked profile requires a valid, unexpired
+// profile token (minted by a successful face match or emailed code) scoped to
+// that exact profile — supplied in the X-Profile-Token header. This is what
+// makes the lock real server-side instead of a client-only gate.
+function guardProfile(getPid) {
+  return h(async (req, res, next) => {
+    const pid = await getPid(req);
+    if (!pid) return next(); // unknown resource — let the handler return 404
+    const { rows } = await query('SELECT auth_disabled FROM profiles WHERE id = $1', [pid]);
+    if (!rows[0]) return next(); // not found — let the handler return 404
+    if (rows[0].auth_disabled) return next(); // open profile — no per-profile check
+    const token = (req.get('x-profile-token') || '').toString();
+    if (verifyProfileToken(token, pid)) return next();
+    return res.status(403).json({ error: 'profile locked — unlock required' });
+  });
+}
+const pidFromParam = (name) => (req) => req.params[name];
+const pidFromResource = (table) => async (req) => {
+  const { rows } = await query(`SELECT profile_id FROM ${table} WHERE id = $1`, [req.params.id]);
+  return rows[0] ? rows[0].profile_id : null;
+};
+
 // ===========================================================================
 // Profiles
 // ===========================================================================
@@ -179,12 +213,12 @@ router.get('/profiles/:id', h(async (req, res) => {
   return row ? res.json(profileOut(row)) : notFound(res, 'profile');
 }));
 
-router.patch('/profiles/:id', h(async (req, res) => {
+router.patch('/profiles/:id', guardProfile(pidFromParam('id')), h(async (req, res) => {
   const row = await updateById('profiles', req.params.id, v.profileBody(req.body, true));
   return row ? res.json(profileOut(row)) : notFound(res, 'profile');
 }));
 
-router.delete('/profiles/:id', h(async (req, res) => {
+router.delete('/profiles/:id', guardProfile(pidFromParam('id')), h(async (req, res) => {
   const ok = await deleteById('profiles', req.params.id); // cascades to children
   return ok ? res.status(204).end() : notFound(res, 'profile');
 }));
@@ -278,7 +312,7 @@ const vaultOut = (row) => ({
   created_at: row.created_at,
 });
 
-router.get('/profiles/:pid/vault', requireVault, h(async (req, res) => {
+router.get('/profiles/:pid/vault', requireVault, guardProfile(pidFromParam('pid')), h(async (req, res) => {
   if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
   const { rows } = await query(
     'SELECT * FROM vault_items WHERE profile_id = $1 ORDER BY created_at',
@@ -287,7 +321,7 @@ router.get('/profiles/:pid/vault', requireVault, h(async (req, res) => {
   res.json(rows.map(vaultOut));
 }));
 
-router.post('/profiles/:pid/vault', requireVault, h(async (req, res) => {
+router.post('/profiles/:pid/vault', requireVault, guardProfile(pidFromParam('pid')), h(async (req, res) => {
   if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
   const { columns, password } = v.vaultBody(req.body);
   const row = await insert('vault_items', {
@@ -300,7 +334,7 @@ router.post('/profiles/:pid/vault', requireVault, h(async (req, res) => {
   res.status(201).json(vaultOut(row));
 }));
 
-router.patch('/vault/:id', requireVault, h(async (req, res) => {
+router.patch('/vault/:id', requireVault, guardProfile(pidFromResource('vault_items')), h(async (req, res) => {
   const { columns, password } = v.vaultBody(req.body, true);
   const patch = { ...columns };
   if (password !== undefined) patch.password_enc = encrypt(password);
@@ -308,7 +342,7 @@ router.patch('/vault/:id', requireVault, h(async (req, res) => {
   return row ? res.json(vaultOut(row)) : notFound(res, 'vault item');
 }));
 
-router.delete('/vault/:id', requireVault, h(async (req, res) => {
+router.delete('/vault/:id', requireVault, guardProfile(pidFromResource('vault_items')), h(async (req, res) => {
   const ok = await deleteById('vault_items', req.params.id);
   return ok ? res.status(204).end() : notFound(res, 'vault item');
 }));
@@ -340,7 +374,7 @@ router.post('/push/unsubscribe', h(async (req, res) => {
 // ===========================================================================
 // Face unlock (descriptors stored encrypted; matching happens server-side)
 // ===========================================================================
-router.post('/profiles/:id/face', h(async (req, res) => {
+router.post('/profiles/:id/face', guardProfile(pidFromParam('id')), h(async (req, res) => {
   if (!vaultEnabled()) return res.status(503).json({ error: 'face storage needs VAULT_KEY' });
   if (!(await profileExists(req.params.id))) return notFound(res, 'profile');
   const enc = encodeDescriptor(req.body && req.body.descriptor); // throws 400 if invalid
@@ -348,7 +382,7 @@ router.post('/profiles/:id/face', h(async (req, res) => {
   res.json(profileOut(row));
 }));
 
-router.delete('/profiles/:id/face', h(async (req, res) => {
+router.delete('/profiles/:id/face', guardProfile(pidFromParam('id')), h(async (req, res) => {
   const row = await updateById('profiles', req.params.id, { face_descriptor: null });
   return row ? res.json(profileOut(row)) : notFound(res, 'profile');
 }));
@@ -369,7 +403,8 @@ router.post('/face/match', h(async (req, res) => {
     if (d < bestDist) { bestDist = d; best = r; }
   }
   if (best && bestDist <= THRESHOLD) {
-    return res.json({ matched: true, profileId: best.id, name: best.name, distance: Number(bestDist.toFixed(4)) });
+    const { token: profileToken, expiresAt } = issueProfileToken(best.id);
+    return res.json({ matched: true, profileId: best.id, name: best.name, distance: Number(bestDist.toFixed(4)), profileToken, expiresAt });
   }
   res.json({ matched: false, profileId: null, distance: best ? Number(bestDist.toFixed(4)) : null });
 }));
@@ -391,7 +426,7 @@ router.post('/profiles/:id/otp/request', otpRequestLimiter, h(async (req, res) =
   res.json({ sent: true, email: maskEmail(p.email), expiresInSec: Math.round(TTL_MS / 1000) });
 }));
 
-router.post('/profiles/:id/otp/verify', h(async (req, res) => {
+router.post('/profiles/:id/otp/verify', otpVerifyLimiter, h(async (req, res) => {
   const code = ((req.body && req.body.code) || '').toString().trim();
   if (!/^\d{4,8}$/.test(code)) return res.status(400).json({ error: 'invalid code format' });
   const { rows } = await query('SELECT id, otp_hash, otp_expires_at, otp_attempts FROM profiles WHERE id = $1', [req.params.id]);
@@ -408,7 +443,8 @@ router.post('/profiles/:id/otp/verify', h(async (req, res) => {
   }
   if (safeEqual(hashCode(code), p.otp_hash)) {
     await query('UPDATE profiles SET otp_hash = NULL, otp_expires_at = NULL, otp_attempts = 0 WHERE id = $1', [p.id]);
-    return res.json({ verified: true });
+    const { token: profileToken, expiresAt } = issueProfileToken(p.id);
+    return res.json({ verified: true, profileToken, expiresAt });
   }
   await query('UPDATE profiles SET otp_attempts = otp_attempts + 1 WHERE id = $1', [p.id]);
   res.status(401).json({ verified: false, error: 'incorrect code' });

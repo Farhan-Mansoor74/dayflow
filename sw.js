@@ -1,7 +1,7 @@
 // Dayflow service worker — powers (1) installable PWA + basic offline shell,
 // and (2) reminder push notifications (even when the app/tab is closed).
 
-const CACHE = 'dayflow-shell-v1';
+const CACHE = 'dayflow-shell-v2';
 const SHELL = [
   './',
   './index.html',
@@ -24,13 +24,16 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Cache-first for same-origin GETs (the app shell). CDN scripts and the API
-// (different origins) always go to the network.
+// Cache-first for same-origin GETs (the app shell). CDN scripts always go to
+// the network. The API must NEVER be cached: on Vercel it is served from the
+// same origin (/api/*), so without this guard the SW would serve stale data
+// (e.g. a profile's auth toggle reverting after the app is reopened).
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return; // network-only, never cache
   e.respondWith(
     caches.match(req).then((cached) =>
       cached ||
