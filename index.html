@@ -712,10 +712,15 @@
           Scan face
         </button>
         </sc-if>
+        <sc-if value="{{ unlockCanEmail }}">
         <button onClick="{{ onUseCode }}" style="width:100%; padding:15px; border:1.5px solid #E0D8D0; background:#fff; border-radius:16px; font-size:16px; font-weight:800; cursor:pointer; color:#5A5250; display:flex; align-items:center; justify-content:center; gap:9px;" style-hover="background:#F5F0EC;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
           Email me a code
         </button>
+        </sc-if>
+        <sc-if value="{{ unlockNoMethod }}">
+        <p style="font-size:13px; color:#9A8F88; margin:2px 0 0; line-height:1.5;">This profile has no face enrolled and email unlock is off. Enroll a face from Manage profiles to unlock the vault.</p>
+        </sc-if>
         <button onClick="{{ onCloseUnlock }}" style="width:100%; padding:12px; border:none; background:none; color:#9A8F88; font-size:14px; font-weight:800; cursor:pointer;">Cancel</button>
       </div>
       </sc-if>
@@ -1676,6 +1681,8 @@ class Component extends DCLogic {
       enrollCaptureLabel:s.enrollBusy?'Scanning…':((enrollProf&&enrollProf.faceEnrolled)?'Re-capture face':'Capture face'),
       unlockOpen:!!s.unlockProfileId,unlockName:unlockProf?unlockProf.name:'',unlockColor:unlockProf?unlockProf.color:accent,unlockInitial:unlockProf?(unlockProf.name[0]||'?').toUpperCase():'?',
       unlockTitle:(s.unlockPurpose==='delete'?'Delete ':s.unlockPurpose==='disableauth'?'Turn off auth — ':'Unlock ')+(unlockProf?unlockProf.name:''),unlockCanFace:!!(unlockProf&&unlockProf.faceEnrolled),
+      unlockCanEmail:!!(unlockProf&&unlockProf.emailAuthEnabled),
+      unlockNoMethod:!!(unlockProf&&!unlockProf.faceEnrolled&&!unlockProf.emailAuthEnabled),
       unlockSubtitle:s.unlockPurpose==='delete'?"Verify it's you — this permanently deletes the profile and all its data.":s.unlockPurpose==='disableauth'?"Verify it's you to turn off the face / email-code lock for this profile.":"Verify it's you to continue.",
       unlockIsChoose:s.unlockMode==='choose',unlockIsFace:s.unlockMode==='face',unlockIsOtp:s.unlockMode==='otp',unlockBusy:s.unlockBusy,unlockStatus:s.unlockStatus,
       setUnlockVideo:this.setUnlockVideo,otpRequested:s.otpRequested,otpNotRequested:!s.otpRequested,otpMasked:s.otpMasked,fOtp:s.fOtp,

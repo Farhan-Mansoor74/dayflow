@@ -130,6 +130,8 @@ function profileBody(b, partial = false) {
   }
   const authDisabled = bool(b.authDisabled, 'authDisabled');
   if (authDisabled !== undefined) out.auth_disabled = authDisabled;
+  const emailAuthEnabled = bool(b.emailAuthEnabled, 'emailAuthEnabled');
+  if (emailAuthEnabled !== undefined) out.email_auth_enabled = emailAuthEnabled;
   if (partial && Object.keys(out).length === 0) bad('no updatable fields provided');
   return out;
 }

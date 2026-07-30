@@ -6,13 +6,15 @@ const { saveSubscription, deleteSubscription, pushEnabled } = require('./push');
 const { THRESHOLD, encodeDescriptor, decodeDescriptor, distance } = require('./face');
 const { TTL_MS, MAX_ATTEMPTS, generateCode, hashCode, safeEqual, maskEmail, emailCode } = require('./otp');
 const { authEnabled, checkKey, issueToken, requireAuth, issueProfileToken, verifyProfileToken } = require('./auth');
-const { tick } = require('./scheduler');
+const { tick, dispatchOne } = require('./scheduler');
+const qstash = require('./qstash');
 
 // Never expose face_descriptor / otp_* columns to clients.
 const profileOut = (r) => ({
   id: r.id, name: r.name, color: r.color, email: r.email || '',
   position: r.position, created_at: r.created_at,
   faceEnrolled: !!r.face_descriptor, authDisabled: !!r.auth_disabled,
+  emailAuthEnabled: !!r.email_auth_enabled,
 });
 
 // Brute-force protection on the household-key check.
@@ -107,6 +109,9 @@ router.get('/health', h(async (_req, res) => {
     vault: vaultEnabled() ? 'enabled' : 'disabled',
     push: pushEnabled() ? 'enabled' : 'disabled',
     auth: authEnabled() ? 'enabled' : 'disabled',
+    // 'disabled' here means reminders fall back to the cron poll, so their
+    // precision is whatever the cron interval is.
+    scheduler: qstash.enabled() ? 'qstash' : `cron only (${qstash.disabledReason()})`,
   });
 }));
 
@@ -159,15 +164,38 @@ router.post('/auth', authLimiter, h(async (req, res) => {
 // Reminder cron tick — called by an external scheduler (e.g. cron-job.org) on
 // serverless hosts where there's no always-on process. Protected by CRON_SECRET.
 // ===========================================================================
+const cronAuthed = (req) => {
+  const secret = process.env.CRON_SECRET || '';
+  const provided = (req.get('x-cron-key') || (req.query && req.query.key) || '').toString();
+  return !!secret && safeEqual(provided, secret);
+};
+
 ['GET', 'POST'].forEach(method => {
   router[method.toLowerCase()]('/cron/run', h(async (req, res) => {
-    const secret = process.env.CRON_SECRET || '';
-    const provided = (req.get('x-cron-key') || (req.query && req.query.key) || '').toString();
-    if (!secret || !safeEqual(provided, secret)) return res.status(401).json({ error: 'unauthorized' });
+    if (!cronAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
     const result = await tick();
     res.json({ ok: true, ...(result || {}) });
   }));
 });
+
+// ===========================================================================
+// QStash callback — fires ONE reminder at its exact scheduled time.
+//
+// QStash forwards the shared secret as x-cron-key (see Upstash-Forward-* in
+// qstash.js), so this uses the same check as the cron endpoint. It must stay
+// above requireAuth: QStash has no session token.
+//
+// A throw here returns 500 and QStash retries. The "nothing to do" cases come
+// back as 200 with a status string so it stops retrying instead.
+// ===========================================================================
+router.post('/reminders/:id/fire', h(async (req, res) => {
+  if (!cronAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
+  const status = await dispatchOne(req.params.id);
+  // The callback is spent either way, so drop the id rather than leave a stale
+  // one that a later edit would try to cancel.
+  await query('UPDATE reminders SET qstash_id = NULL WHERE id = $1', [req.params.id]);
+  res.json({ ok: true, status });
+}));
 
 // ---- Everything past here is gated by a valid session token ----------------
 router.use(requireAuth);
@@ -226,7 +254,9 @@ router.delete('/profiles/:id', guardProfile(pidFromParam('id')), h(async (req, r
 // ===========================================================================
 // Generic child-resource wiring (tasks / reminders / expenses)
 // ===========================================================================
-function childRoutes({ base, table, validate, listOrder }) {
+// `out` shapes rows on the way out; `afterWrite` / `beforeDelete` let one
+// resource hook into its own writes (only reminders needs this, for QStash).
+function childRoutes({ base, table, validate, listOrder, out = (r) => r, afterWrite, beforeDelete }) {
   // list for a profile
   router.get(`/profiles/:pid/${base}`, h(async (req, res) => {
     if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
@@ -234,31 +264,65 @@ function childRoutes({ base, table, validate, listOrder }) {
       `SELECT * FROM ${table} WHERE profile_id = $1 ORDER BY ${listOrder}`,
       [req.params.pid]
     );
-    res.json(rows);
+    res.json(rows.map(out));
   }));
 
   // create under a profile
   router.post(`/profiles/:pid/${base}`, h(async (req, res) => {
     if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
-    const row = await insert(table, { profile_id: req.params.pid, ...validate(req.body) });
-    res.status(201).json(row);
+    let row = await insert(table, { profile_id: req.params.pid, ...validate(req.body) });
+    if (afterWrite) row = await afterWrite(row);
+    res.status(201).json(out(row));
   }));
 
   // update by id
   router.patch(`/${base}/:id`, h(async (req, res) => {
-    const row = await updateById(table, req.params.id, validate(req.body, true));
-    return row ? res.json(row) : notFound(res, base);
+    let row = await updateById(table, req.params.id, validate(req.body, true));
+    if (!row) return notFound(res, base);
+    if (afterWrite) row = await afterWrite(row);
+    res.json(out(row));
   }));
 
   // delete by id
   router.delete(`/${base}/:id`, h(async (req, res) => {
+    if (beforeDelete) await beforeDelete(req.params.id);
     const ok = await deleteById(table, req.params.id);
     return ok ? res.status(204).end() : notFound(res, base);
   }));
 }
 
 childRoutes({ base: 'tasks', table: 'tasks', validate: v.taskBody, listOrder: 'position, created_at' });
-childRoutes({ base: 'reminders', table: 'reminders', validate: v.reminderBody, listOrder: 'datetime' });
+
+childRoutes({
+  base: 'reminders',
+  table: 'reminders',
+  validate: v.reminderBody,
+  listOrder: 'datetime',
+  // qstash_id is internal bookkeeping; the client has no use for it.
+  out: ({ qstash_id, ...r }) => r, // eslint-disable-line no-unused-vars
+  // Any write can change when (or whether) the reminder should fire, so cancel
+  // the pending callback and schedule a fresh one. Scheduling failures return
+  // null and are non-fatal — the cron tick remains the backstop.
+  //
+  // Both hooks no-op unless QStash is configured, so this code runs unchanged
+  // against a database that has not had the qstash_id column added yet.
+  async afterWrite(row) {
+    if (!qstash.enabled()) return row;
+    const messageId = await qstash.reschedule(row);
+    if (messageId === (row.qstash_id ?? null)) return row;
+    const { rows } = await query(
+      'UPDATE reminders SET qstash_id = $1 WHERE id = $2 RETURNING *',
+      [messageId, row.id]
+    );
+    return rows[0] || row;
+  },
+  async beforeDelete(id) {
+    if (!qstash.enabled()) return;
+    const { rows } = await query('SELECT qstash_id FROM reminders WHERE id = $1', [id]);
+    if (rows[0]) await qstash.cancel(rows[0].qstash_id);
+  },
+});
+
 childRoutes({ base: 'expenses', table: 'expenses', validate: v.expenseBody, listOrder: 'date DESC, created_at DESC' });
 
 // Reorder tasks within a profile: body { ids: [...] } in the desired order.
@@ -413,25 +477,36 @@ router.post('/face/match', h(async (req, res) => {
 // Email OTP (login codes)
 // ===========================================================================
 router.post('/profiles/:id/otp/request', otpRequestLimiter, h(async (req, res) => {
-  const { rows } = await query('SELECT id, name, email FROM profiles WHERE id = $1', [req.params.id]);
+  const { rows } = await query('SELECT id, name, email, email_auth_enabled FROM profiles WHERE id = $1', [req.params.id]);
   const p = rows[0];
   if (!p) return notFound(res, 'profile');
+  if (!p.email_auth_enabled) return res.status(403).json({ error: 'email unlock is disabled for this profile — use face scan' });
   if (!p.email) return res.status(400).json({ error: 'this profile has no email on file' });
   const code = generateCode();
   await query(
     "UPDATE profiles SET otp_hash = $1, otp_expires_at = now() + ($2 || ' milliseconds')::interval, otp_attempts = 0 WHERE id = $3",
     [hashCode(code), String(TTL_MS), p.id]
   );
-  emailCode(p.email, p.name, code).catch((e) => console.error('[otp] email failed:', e.message));
+  // Awaited on purpose: on Vercel the function can freeze the instant res.json()
+  // is sent, so a fire-and-forget send here has no guarantee of ever completing —
+  // the client would see "sent: true" even when no email goes out. That silent
+  // failure is what forced a resend every time.
+  try {
+    await emailCode(p.email, p.name, code);
+  } catch (e) {
+    console.error('[otp] email failed:', e.message);
+    return res.status(502).json({ error: 'could not send the code — try again' });
+  }
   res.json({ sent: true, email: maskEmail(p.email), expiresInSec: Math.round(TTL_MS / 1000) });
 }));
 
 router.post('/profiles/:id/otp/verify', otpVerifyLimiter, h(async (req, res) => {
   const code = ((req.body && req.body.code) || '').toString().trim();
   if (!/^\d{4,8}$/.test(code)) return res.status(400).json({ error: 'invalid code format' });
-  const { rows } = await query('SELECT id, otp_hash, otp_expires_at, otp_attempts FROM profiles WHERE id = $1', [req.params.id]);
+  const { rows } = await query('SELECT id, otp_hash, otp_expires_at, otp_attempts, email_auth_enabled FROM profiles WHERE id = $1', [req.params.id]);
   const p = rows[0];
   if (!p) return notFound(res, 'profile');
+  if (!p.email_auth_enabled) return res.status(403).json({ error: 'email unlock is disabled for this profile — use face scan' });
   if (!p.otp_hash || !p.otp_expires_at) return res.status(400).json({ error: 'no active code — request one first' });
   if (new Date(p.otp_expires_at).getTime() < Date.now()) {
     await query('UPDATE profiles SET otp_hash = NULL WHERE id = $1', [p.id]);

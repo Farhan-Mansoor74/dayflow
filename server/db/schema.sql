@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   otp_expires_at  timestamptz,
   otp_attempts    integer     NOT NULL DEFAULT 0,
   auth_disabled   boolean     NOT NULL DEFAULT false, -- true = profile opens without face/OTP
+  email_auth_enabled boolean  NOT NULL DEFAULT false, -- false = email/OTP unlock unavailable; face scan only
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 -- for databases created before these columns existed:
@@ -21,6 +22,7 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS otp_hash        text;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS otp_expires_at  timestamptz;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS otp_attempts    integer NOT NULL DEFAULT 0;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS auth_disabled   boolean NOT NULL DEFAULT false;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email_auth_enabled boolean NOT NULL DEFAULT false;
 
 -- Brute-force throttle for the household access key, keyed by client IP. Lives in
 -- the DB so it works on serverless hosts where there is no shared in-memory state.
@@ -56,8 +58,11 @@ CREATE TABLE IF NOT EXISTS reminders (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_profile ON reminders(profile_id);
--- for existing databases created before notified_at was added:
+-- for existing databases created before these columns were added:
 ALTER TABLE reminders ADD COLUMN IF NOT EXISTS notified_at timestamptz;
+-- QStash message id for this reminder's scheduled callback, so an edit or
+-- delete can cancel the pending one. NULL when nothing is scheduled.
+ALTER TABLE reminders ADD COLUMN IF NOT EXISTS qstash_id text;
 
 -- Browser push subscriptions (per device/browser; shared across profiles on a device).
 CREATE TABLE IF NOT EXISTS push_subscriptions (
