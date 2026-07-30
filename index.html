@@ -902,19 +902,20 @@ class Component extends DCLogic {
   async loadFromServer(){
     const profiles=await this.api('GET','/profiles');
     return Promise.all(profiles.map(async p=>{
-      const open=!!p.authDisabled; // "open" profiles need no unlock; locked ones load their vault later
-      const [tasks,reminders,expenses,vault]=await Promise.all([
+      // Vault is ALWAYS deferred now, even for an "open" (authDisabled) profile —
+      // it needs its own unlock (see the Vault tab's onClick), independent of
+      // whether the profile itself prompts before opening.
+      const [tasks,reminders,expenses]=await Promise.all([
         this.api('GET','/profiles/'+p.id+'/tasks'),
         this.api('GET','/profiles/'+p.id+'/reminders'),
         this.api('GET','/profiles/'+p.id+'/expenses'),
-        open?this.api('GET','/profiles/'+p.id+'/vault',null,p.id).catch(()=>[]):Promise.resolve(null),
       ]);
-      return {id:p.id,name:p.name,color:p.color,email:p.email||'',faceEnrolled:!!p.faceEnrolled,authDisabled:open,
+      return {id:p.id,name:p.name,color:p.color,email:p.email||'',faceEnrolled:!!p.faceEnrolled,authDisabled:!!p.authDisabled,emailAuthEnabled:!!p.emailAuthEnabled,
         tasks:tasks.map(t=>this.mapTask(t)),
         reminders:reminders.map(r=>this.mapReminder(r)),
         expenses:expenses.map(e=>this.mapExpense(e)),
-        vault:vault?vault.map(v=>this.mapVault(v)):[],
-        vaultLoaded:!!vault}; // locked profile's vault stays unloaded until unlock
+        vault:[],
+        vaultLoaded:false};
     }));
   }
   // Fetch a just-unlocked (locked) profile's vault with its profile token, then open it.
@@ -1241,7 +1242,16 @@ class Component extends DCLogic {
   // gate unlock (picker)
   openUnlock(id,purpose){this.setState({unlockProfileId:id,unlockPurpose:purpose||'open',unlockMode:'choose',unlockBusy:false,unlockStatus:'',fOtp:'',otpMasked:'',otpRequested:false});}
   closeUnlock(){this.stopCamera();this.setState({unlockProfileId:null,unlockBusy:false,otpRequested:false,fOtp:''});}
-  unlockSuccess(){const id=this.state.unlockProfileId;const purpose=this.state.unlockPurpose;this.stopCamera();this.setState({unlockProfileId:null,otpRequested:false,fOtp:''});if(purpose==='delete')this.deleteProfile(id);else if(purpose==='disableauth')this.setAuthDisabled(id,true);else if(purpose==='enroll')this.openEnroll(id);else this.loadLockedProfile(id);}
+  unlockSuccess(){const id=this.state.unlockProfileId;const purpose=this.state.unlockPurpose;this.stopCamera();this.setState({unlockProfileId:null,otpRequested:false,fOtp:''});if(purpose==='delete')this.deleteProfile(id);else if(purpose==='disableauth')this.setAuthDisabled(id,true);else if(purpose==='enroll')this.openEnroll(id);else if(purpose==='vault')this.loadVaultTab(id);else this.loadLockedProfile(id);}
+  // Vault-specific unlock: fetch the vault and switch to its tab WITHOUT
+  // resetting activeTab to 'tasks' (which openProfile/loadLockedProfile do) —
+  // we're already inside the profile, just unlocking one tab within it.
+  loadVaultTab(id){
+    this.api('GET','/profiles/'+id+'/vault',null,id).catch(()=>[]).then(vault=>{
+      const profiles=this.state.profiles.map(x=>x.id===id?Object.assign({},x,{vault:vault.map(v=>this.mapVault(v)),vaultLoaded:true}):x);
+      this.setState({profiles,activeTab:'vault'});
+    }).catch(e=>{if(!this.handleAuthError(e))this.toast('Could not open vault: '+e.message,'error');});
+  }
   setAuthDisabled(id,val){
     const profiles=this.state.profiles.map(p=>p.id===id?{...p,authDisabled:val}:p);
     this.setState({profiles});
@@ -1627,7 +1637,10 @@ class Component extends DCLogic {
       const active2=s.activeTab===td.key;
       return{...td,badge:td.badge||0,hasBadge:!!td.hasBadge,badgeStyle:'display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:'+activeColor+';color:#fff;font-size:11px;font-weight:900;margin-left:2px;',
         style:'flex:1;padding:10px 4px;border:none;border-radius:14px;font-size:13px;font-weight:800;cursor:pointer;transition:all .2s;'+(active2?'background:#fff;color:'+activeColor+';box-shadow:0 2px 8px rgba(0,0,0,.1);':'background:transparent;color:#9A8F88;'),
-        onClick:()=>this.setState({activeTab:td.key})};
+        // Vault stays gated even when the profile itself is open: switching
+        // to it directly only works once vaultLoaded is true (set by a
+        // successful unlock); otherwise it prompts for one first.
+        onClick:td.key==='vault'&&!(active&&active.vaultLoaded)?(()=>this.openUnlock(s.activeId,'vault')):(()=>this.setState({activeTab:td.key}))};
     });
     const fabColor=s.activeTab==='tasks'?accent:activeColor;
     const fabActions={tasks:()=>this.openAdd(),reminders:()=>this.openAddReminder(),expenses:()=>this.openAddExpense(),vault:()=>this.openAddVault()};

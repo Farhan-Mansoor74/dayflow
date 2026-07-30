@@ -217,6 +217,19 @@ function guardProfile(getPid) {
     return res.status(403).json({ error: 'profile locked — unlock required' });
   });
 }
+// Vault access ALWAYS requires its own unlock (face scan, or email code if
+// that's enabled for the profile) — unlike guardProfile, it does NOT bypass on
+// auth_disabled. auth_disabled only means "the profile itself opens without a
+// prompt"; it must not also hand out the vault for free.
+function requireVaultUnlock(getPid) {
+  return h(async (req, res, next) => {
+    const pid = await getPid(req);
+    if (!pid) return next(); // unknown resource — let the handler return 404
+    const token = (req.get('x-profile-token') || '').toString();
+    if (verifyProfileToken(token, pid)) return next();
+    return res.status(403).json({ error: 'vault locked — unlock required' });
+  });
+}
 const pidFromParam = (name) => (req) => req.params[name];
 const pidFromResource = (table) => async (req) => {
   const { rows } = await query(`SELECT profile_id FROM ${table} WHERE id = $1`, [req.params.id]);
@@ -376,7 +389,7 @@ const vaultOut = (row) => ({
   created_at: row.created_at,
 });
 
-router.get('/profiles/:pid/vault', requireVault, guardProfile(pidFromParam('pid')), h(async (req, res) => {
+router.get('/profiles/:pid/vault', requireVault, requireVaultUnlock(pidFromParam('pid')), h(async (req, res) => {
   if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
   const { rows } = await query(
     'SELECT * FROM vault_items WHERE profile_id = $1 ORDER BY created_at',
@@ -385,7 +398,7 @@ router.get('/profiles/:pid/vault', requireVault, guardProfile(pidFromParam('pid'
   res.json(rows.map(vaultOut));
 }));
 
-router.post('/profiles/:pid/vault', requireVault, guardProfile(pidFromParam('pid')), h(async (req, res) => {
+router.post('/profiles/:pid/vault', requireVault, requireVaultUnlock(pidFromParam('pid')), h(async (req, res) => {
   if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
   const { columns, password } = v.vaultBody(req.body);
   const row = await insert('vault_items', {
@@ -398,7 +411,7 @@ router.post('/profiles/:pid/vault', requireVault, guardProfile(pidFromParam('pid
   res.status(201).json(vaultOut(row));
 }));
 
-router.patch('/vault/:id', requireVault, guardProfile(pidFromResource('vault_items')), h(async (req, res) => {
+router.patch('/vault/:id', requireVault, requireVaultUnlock(pidFromResource('vault_items')), h(async (req, res) => {
   const { columns, password } = v.vaultBody(req.body, true);
   const patch = { ...columns };
   if (password !== undefined) patch.password_enc = encrypt(password);
@@ -406,7 +419,7 @@ router.patch('/vault/:id', requireVault, guardProfile(pidFromResource('vault_ite
   return row ? res.json(vaultOut(row)) : notFound(res, 'vault item');
 }));
 
-router.delete('/vault/:id', requireVault, guardProfile(pidFromResource('vault_items')), h(async (req, res) => {
+router.delete('/vault/:id', requireVault, requireVaultUnlock(pidFromResource('vault_items')), h(async (req, res) => {
   const ok = await deleteById('vault_items', req.params.id);
   return ok ? res.status(204).end() : notFound(res, 'vault item');
 }));
