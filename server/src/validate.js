@@ -182,6 +182,26 @@ function expenseBody(b, partial = false) {
   return out;
 }
 
+// Category colours get interpolated straight into inline `style` attributes on
+// the client, so only a literal hex colour is accepted — never arbitrary CSS.
+function hexColor(v, field, { required = false } = {}) {
+  const s = str(v, field, { required, max: 7 });
+  if (s === undefined) return undefined;
+  if (!/^#[0-9a-fA-F]{6}$/.test(s)) bad(`${field} must be a hex colour like #E8694A`);
+  return s.toUpperCase();
+}
+
+// `key` is never client-supplied — the route slugifies it from the label.
+function categoryBody(b, partial = false) {
+  const out = {};
+  const label = str(b.label, 'label', { required: !partial, max: 40 });
+  if (label !== undefined) out.label = label;
+  const color = hexColor(b.color, 'color', { required: !partial });
+  if (color !== undefined) out.color = color;
+  if (partial && Object.keys(out).length === 0) bad('no updatable fields provided');
+  return out;
+}
+
 // Vault keeps the plaintext password separate; the route encrypts it.
 function vaultBody(b, partial = false) {
   const out = {};
@@ -207,5 +227,6 @@ module.exports = {
   taskBody,
   reminderBody,
   expenseBody,
+  categoryBody,
   vaultBody,
 };

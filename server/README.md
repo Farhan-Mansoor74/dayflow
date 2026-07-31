@@ -23,7 +23,7 @@ npm run migrate
 npm run seed            # optional, DESTRUCTIVE: replaces all rows with the demo profiles
 
 # 4) run it
-npm start               # http://localhost:3001  (health: /api/health)
+npm start               # http://localhost:3088  (health: /api/health)
 npm run smoke           # in another terminal: end-to-end API check
 ```
 
@@ -33,7 +33,7 @@ npm run smoke           # in another terminal: end-to-end API check
 | -------------- | ------------------------------------------------------------- |
 | `DATABASE_URL` | Postgres connection string (or use the `PG*` vars instead).   |
 | `VAULT_KEY`    | 64 hex chars (32 bytes). Encrypts vault passwords at rest.    |
-| `PORT`         | API port (default `3001`).                                    |
+| `PORT`         | API port (default `3088`).                                    |
 | `CORS_ORIGINS` | Comma-separated frontend origins allowed to call the API.    |
 
 ## API

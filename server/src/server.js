@@ -2,7 +2,7 @@ require('dotenv').config();
 const { createApp } = require('./app');
 const { startScheduler } = require('./scheduler');
 
-const port = Number(process.env.PORT) || 3001;
+const port = Number(process.env.PORT) || 3088;
 const app = createApp();
 
 const server = app.listen(port, () => {

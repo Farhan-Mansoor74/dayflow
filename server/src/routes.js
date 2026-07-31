@@ -244,6 +244,39 @@ router.get('/profiles', h(async (_req, res) => {
   res.json(rows.map(profileOut));
 }));
 
+// Everything the client needs to paint the first screen, in ONE round trip.
+// Without this the boot path was 1 + 1 + (3 x profile count) requests across
+// three blocking waves. Vault is deliberately excluded — it always needs its
+// own per-profile unlock, so it stays deferred.
+router.get('/bootstrap', h(async (_req, res) => {
+  const [profiles, tasks, reminders, expenses, categories] = await Promise.all([
+    query('SELECT * FROM profiles ORDER BY position, created_at'),
+    query('SELECT * FROM tasks ORDER BY position, created_at'),
+    query('SELECT * FROM reminders ORDER BY datetime'),
+    query('SELECT * FROM expenses ORDER BY date DESC, created_at DESC'),
+    query('SELECT * FROM categories ORDER BY position, created_at'),
+  ]);
+  // Bucket the children by profile_id in one pass each, preserving SQL order.
+  const bucket = (rows, shape) => {
+    const by = {};
+    for (const r of rows) (by[r.profile_id] || (by[r.profile_id] = [])).push(shape(r));
+    return by;
+  };
+  const byTask = bucket(tasks.rows, (r) => r);
+  // qstash_id is internal bookkeeping; mirrors the reminders childRoutes `out`.
+  const byRem = bucket(reminders.rows, ({ qstash_id, ...r }) => r); // eslint-disable-line no-unused-vars
+  const byExp = bucket(expenses.rows, (r) => r);
+  res.json({
+    categories: categories.rows,
+    profiles: profiles.rows.map((p) => ({
+      ...profileOut(p),
+      tasks: byTask[p.id] || [],
+      reminders: byRem[p.id] || [],
+      expenses: byExp[p.id] || [],
+    })),
+  });
+}));
+
 router.post('/profiles', h(async (req, res) => {
   const row = await insert('profiles', v.profileBody(req.body));
   res.status(201).json(profileOut(row));
@@ -269,7 +302,7 @@ router.delete('/profiles/:id', guardProfile(pidFromParam('id')), h(async (req, r
 // ===========================================================================
 // `out` shapes rows on the way out; `afterWrite` / `beforeDelete` let one
 // resource hook into its own writes (only reminders needs this, for QStash).
-function childRoutes({ base, table, validate, listOrder, out = (r) => r, afterWrite, beforeDelete }) {
+function childRoutes({ base, table, validate, listOrder, out = (r) => r, beforeWrite, afterWrite, beforeDelete }) {
   // list for a profile
   router.get(`/profiles/:pid/${base}`, h(async (req, res) => {
     if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
@@ -283,14 +316,18 @@ function childRoutes({ base, table, validate, listOrder, out = (r) => r, afterWr
   // create under a profile
   router.post(`/profiles/:pid/${base}`, h(async (req, res) => {
     if (!(await profileExists(req.params.pid))) return notFound(res, 'profile');
-    let row = await insert(table, { profile_id: req.params.pid, ...validate(req.body) });
+    let body = validate(req.body);
+    if (beforeWrite) body = await beforeWrite(body, req);
+    let row = await insert(table, { profile_id: req.params.pid, ...body });
     if (afterWrite) row = await afterWrite(row);
     res.status(201).json(out(row));
   }));
 
   // update by id
   router.patch(`/${base}/:id`, h(async (req, res) => {
-    let row = await updateById(table, req.params.id, validate(req.body, true));
+    let body = validate(req.body, true);
+    if (beforeWrite) body = await beforeWrite(body, req);
+    let row = await updateById(table, req.params.id, body);
     if (!row) return notFound(res, base);
     if (afterWrite) row = await afterWrite(row);
     res.json(out(row));
@@ -336,7 +373,119 @@ childRoutes({
   },
 });
 
-childRoutes({ base: 'expenses', table: 'expenses', validate: v.expenseBody, listOrder: 'date DESC, created_at DESC' });
+childRoutes({
+  base: 'expenses',
+  table: 'expenses',
+  validate: v.expenseBody,
+  listOrder: 'date DESC, created_at DESC',
+  beforeWrite: normaliseExpenseCategory,
+});
+
+// ===========================================================================
+// Categories (household-wide)
+// ===========================================================================
+const CATEGORY_LIMIT = 40; // keeps the picker usable and bounds the payload
+
+const listCategories = async () => {
+  const { rows } = await query('SELECT * FROM categories ORDER BY position, created_at');
+  return rows;
+};
+
+// Derive a stable slug from the label. Collisions get a numeric suffix, so two
+// categories called "Travel" become 'travel' and 'travel-2'.
+async function uniqueKey(label) {
+  const base = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'category';
+  const { rows } = await query('SELECT key FROM categories WHERE key = $1 OR key LIKE $2', [base, base + '-%']);
+  const taken = new Set(rows.map((r) => r.key));
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 1000; n += 1) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+  throw new v.HttpError(409, 'too many categories with that name');
+}
+
+router.get('/categories', h(async (_req, res) => {
+  res.json(await listCategories());
+}));
+
+router.post('/categories', h(async (req, res) => {
+  const body = v.categoryBody(req.body);
+  const { rows: [{ count }] } = await query('SELECT count(*)::int AS count FROM categories');
+  if (count >= CATEGORY_LIMIT) {
+    return res.status(409).json({ error: `at most ${CATEGORY_LIMIT} categories` });
+  }
+  // Sort new categories after the existing user ones but before builtin 'other'.
+  const { rows: [{ next }] } = await query(
+    'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM categories WHERE builtin = false'
+  );
+  const row = await insert('categories', { key: await uniqueKey(body.label), ...body, position: next });
+  res.status(201).json(row);
+}));
+
+// Rename / recolour only — `key` is immutable so existing expenses stay attached.
+router.patch('/categories/:key', h(async (req, res) => {
+  const body = v.categoryBody(req.body, true);
+  const cols = Object.keys(body);
+  const set = cols.map((c, i) => `${c} = $${i + 1}`);
+  const { rows } = await query(
+    `UPDATE categories SET ${set.join(', ')} WHERE key = $${cols.length + 1} RETURNING *`,
+    [...cols.map((c) => body[c]), req.params.key]
+  );
+  return rows[0] ? res.json(rows[0]) : notFound(res, 'category');
+}));
+
+// Deleting reassigns its expenses to the builtin 'other' rather than orphaning
+// them, so totals stay correct. Both statements run in one transaction.
+router.delete('/categories/:key', h(async (req, res) => {
+  const key = req.params.key;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT builtin FROM categories WHERE key = $1 FOR UPDATE', [key]);
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'category');
+    }
+    if (rows[0].builtin) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'this category is built in and cannot be deleted' });
+    }
+    const { rowCount: moved } = await client.query(
+      "UPDATE expenses SET category = 'other' WHERE category = $1",
+      [key]
+    );
+    await client.query('DELETE FROM categories WHERE key = $1', [key]);
+    await client.query('COMMIT');
+    res.json({ ok: true, reassigned: moved });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}));
+
+// An expense may only reference a category that exists. Income rows don't carry
+// a real category (they're excluded from the category donut), so they're pinned
+// to the reserved 'income' value instead of being validated against the table.
+async function normaliseExpenseCategory(body, req) {
+  const existing = req.params.id ? await getById('expenses', req.params.id) : null;
+  const type = body.type !== undefined ? body.type : (existing || {}).type;
+  if (type === 'income') {
+    body.category = 'income';
+    return body;
+  }
+  // The value that will actually end up stored, whether or not this write sets it.
+  const cat = body.category !== undefined ? body.category : (existing ? existing.category : undefined);
+  if (cat === undefined) return body; // create with no category — column defaults to 'other'
+  const { rows } = await query('SELECT 1 FROM categories WHERE key = $1', [cat]);
+  if (!rows[0]) {
+    // Explicitly asking for a category that doesn't exist is a client error...
+    if (body.category !== undefined) throw new v.HttpError(400, 'unknown category');
+    // ...but an already-stored value going stale (income -> expense, or a
+    // category deleted mid-edit) just falls back to 'other'.
+    body.category = 'other';
+  }
+  return body;
+}
 
 // Reorder tasks within a profile: body { ids: [...] } in the desired order.
 router.post('/profiles/:pid/tasks/reorder', h(async (req, res) => {

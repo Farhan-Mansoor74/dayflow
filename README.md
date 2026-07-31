@@ -61,13 +61,13 @@ both running. The web app must be served over HTTP (not opened as a `file://`).
 cd server
 npm install
 npm run migrate         # creates/updates the Postgres tables (safe to re-run)
-npm start               # → http://localhost:3001
+npm start               # → http://localhost:3088
 
 # 2) Frontend — in another terminal, from the project root
-python -m http.server 8000     # or: npx serve . -l 8000
+python -m http.server 8088    # or: npx serve . -l 8088
 ```
 
-Then open **http://localhost:8000**. See [`server/README.md`](server/README.md)
+Then open **http://localhost:8088**. See [`server/README.md`](server/README.md)
 for database, email (SMTP), and Web Push setup.
 
 ### Configuration
@@ -80,7 +80,7 @@ Secrets live in `server/.env` (never committed). Key ones:
 - `VAULT_KEY` — 32-byte key that encrypts vault passwords at rest (`npm run keygen`).
 - `CRON_SECRET`, `VAPID_*`, `SMTP_*` — for reminders (cron, Web Push, email).
 
-The web app calls the API at `http://localhost:3001/api` by default; override it
+The web app calls the API at `http://localhost:3088/api` by default; override it
 by setting `window.DAYFLOW_API_BASE` before `support.js` loads (e.g. when the API
 is hosted elsewhere, such as a Vercel deployment where it lives at `/api`).
 

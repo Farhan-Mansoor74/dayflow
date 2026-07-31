@@ -73,6 +73,31 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 
+-- Household-wide expense categories (shared by every profile). `key` is the
+-- stable slug stored on expenses.category — renaming a category changes `label`
+-- only, so existing expenses keep pointing at it.
+CREATE TABLE IF NOT EXISTS categories (
+  key        text        PRIMARY KEY,
+  label      text        NOT NULL,
+  color      text        NOT NULL,
+  position   integer     NOT NULL DEFAULT 0,
+  builtin    boolean     NOT NULL DEFAULT false,  -- true = cannot be deleted ('other', the reassign target)
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- Seed the set that used to be hardcoded in the client, with the same keys and
+-- colours so existing expenses keep their category. Idempotent: an edited or
+-- deleted category is not resurrected on redeploy.
+INSERT INTO categories (key, label, color, position, builtin) VALUES
+  ('food',          'Food & Drink',  '#E8694A', 0,    false),
+  ('transport',     'Transport',     '#E0A458', 1,    false),
+  ('shopping',      'Shopping',      '#9B7BA8', 2,    false),
+  ('entertainment', 'Entertainment', '#6B8CAE', 3,    false),
+  ('health',        'Health',        '#5B9A8B', 4,    false),
+  ('bills',         'Bills',         '#8B9A6B', 5,    false),
+  ('housing',       'Housing',       '#C97B84', 6,    false),
+  ('other',         'Other',         '#A89E96', 9999, true)
+ON CONFLICT (key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS expenses (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   profile_id  uuid          NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
