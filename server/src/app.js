@@ -54,7 +54,9 @@ function createApp() {
     if (err && err.code) {
       switch (err.code) {
         case '23503': // foreign key violation
-          return res.status(404).json({ error: 'referenced profile not found' });
+          return res.status(404).json({ error: 'referenced record not found' });
+        case '23505': // unique violation
+          return res.status(409).json({ error: 'that record already exists' });
         case '23514': // check constraint violation
           return res.status(400).json({ error: 'value violates a field constraint' });
         case '22P02': // invalid text representation (e.g. malformed uuid)

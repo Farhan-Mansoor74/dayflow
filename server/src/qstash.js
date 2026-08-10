@@ -38,7 +38,13 @@ async function schedule(reminder) {
   const at = Math.floor(new Date(reminder.datetime).getTime() / 1000);
 
   try {
-    const res = await fetch(`${QSTASH_API}/publish/${encodeURIComponent(target)}`, {
+    // The destination is appended to the path RAW. Percent-encoding it turns
+    // "https://" into "https%3A%2F%2F" and QStash rejects the whole publish with
+    // "endpoint has invalid scheme" — which, because a failed publish is
+    // deliberately non-fatal here, fails silently and quietly demotes every
+    // reminder to the cron poll. The id is a UUID and the base comes from env,
+    // so there is nothing in the path that needs escaping.
+    const res = await fetch(`${QSTASH_API}/publish/${target}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token()}`,
@@ -55,7 +61,14 @@ async function schedule(reminder) {
     });
 
     if (!res.ok) {
-      console.error('[qstash] publish failed:', res.status, (await res.text()).slice(0, 200));
+      const body = (await res.text()).slice(0, 200);
+      // The free plan caps scheduling at 7 days out. A reminder further away
+      // than that isn't an error — the cron tick picks it up when it comes due.
+      if (res.status === 412 && body.includes('maxDelay')) {
+        console.log('[qstash] reminder', reminder.id, 'is beyond the plan\'s scheduling horizon — the cron will deliver it');
+      } else {
+        console.error('[qstash] publish failed:', res.status, body);
+      }
       return null;
     }
     const body = await res.json();

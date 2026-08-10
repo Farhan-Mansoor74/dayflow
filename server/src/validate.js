@@ -102,36 +102,40 @@ function ymd(v, field, { required = false } = {}) {
 // Each returns an object whose keys are column names. `partial` (PATCH) only
 // includes the fields that were actually present in the body.
 
-function emailAddr(v, field, { required = false } = {}) {
-  if (v == null || v === '') {
-    if (required) bad(`${field} is required`);
-    return undefined;
-  }
-  if (typeof v !== 'string') bad(`${field} must be a string`);
-  const s = v.trim();
-  if (s.length > 254) bad(`${field} is too long`);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) bad(`${field} must be a valid email address`);
-  return s;
-}
-
-function profileBody(b, partial = false) {
+// The account's own editable settings. email / picture / google_sub all come
+// from Google and are never client-writable.
+function userBody(b, partial = false) {
   const out = {};
   const name = str(b.name, 'name', { required: !partial, max: 60 });
   if (name !== undefined) out.name = name;
-  const color = str(b.color, 'color', { required: !partial, max: 32 });
+  const color = hexColor(b.color, 'color', { required: false });
   if (color !== undefined) out.color = color;
-  // email is required when creating a profile, optional (but validated) on update
-  if (!partial) out.email = emailAddr(b.email, 'email', { required: true });
-  else if (b.email !== undefined) out.email = emailAddr(b.email, 'email', { required: false }) || '';
-  if (b.position != null) {
-    const p = Number(b.position);
-    if (!Number.isInteger(p)) bad('position must be an integer');
-    out.position = p;
+  if (b.cycleStartDay !== undefined) {
+    const d = Number(b.cycleStartDay);
+    if (!Number.isInteger(d) || d < 1 || d > 31) bad('cycleStartDay must be an integer 1..31');
+    out.cycle_start_day = d;
   }
-  const authDisabled = bool(b.authDisabled, 'authDisabled');
-  if (authDisabled !== undefined) out.auth_disabled = authDisabled;
-  const emailAuthEnabled = bool(b.emailAuthEnabled, 'emailAuthEnabled');
-  if (emailAuthEnabled !== undefined) out.email_auth_enabled = emailAuthEnabled;
+  // The browser reports this; reject anything Intl can't actually resolve, since
+  // an unknown zone would throw inside the notification cron for every user.
+  if (b.timezone !== undefined) {
+    const tz = str(b.timezone, 'timezone', { max: 64 });
+    try {
+      new Intl.DateTimeFormat('en-CA', { timeZone: tz });
+    } catch {
+      bad('timezone must be a valid IANA name like Asia/Dubai');
+    }
+    out.timezone = tz;
+  }
+  for (const [field, col] of [['digestHour', 'digest_hour'], ['wrapupHour', 'wrapup_hour']]) {
+    if (b[field] === undefined) continue;
+    const h = Number(b[field]);
+    if (!Number.isInteger(h) || h < 0 || h > 23) bad(`${field} must be an integer 0..23`);
+    out[col] = h;
+  }
+  for (const [field, col] of [['notifyDigest', 'notify_digest'], ['notifyHeadsUp', 'notify_headsup'], ['notifyWrapup', 'notify_wrapup']]) {
+    const v = bool(b[field], field);
+    if (v !== undefined) out[col] = v;
+  }
   if (partial && Object.keys(out).length === 0) bad('no updatable fields provided');
   return out;
 }
@@ -192,12 +196,18 @@ function hexColor(v, field, { required = false } = {}) {
 }
 
 // `key` is never client-supplied — the route slugifies it from the label.
+// `parentKey` is accepted on create only; the route checks it exists and is
+// itself top-level, then strips it on update so the tree can't be reshaped
+// underneath existing expenses.
 function categoryBody(b, partial = false) {
   const out = {};
   const label = str(b.label, 'label', { required: !partial, max: 40 });
   if (label !== undefined) out.label = label;
   const color = hexColor(b.color, 'color', { required: !partial });
   if (color !== undefined) out.color = color;
+  if (b.parentKey !== undefined && b.parentKey !== null && b.parentKey !== '') {
+    out.parent_key = str(b.parentKey, 'parentKey', { max: 40 });
+  }
   if (partial && Object.keys(out).length === 0) bad('no updatable fields provided');
   return out;
 }
@@ -223,7 +233,7 @@ function vaultBody(b, partial = false) {
 
 module.exports = {
   HttpError,
-  profileBody,
+  userBody,
   taskBody,
   reminderBody,
   expenseBody,

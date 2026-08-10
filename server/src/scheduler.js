@@ -1,9 +1,9 @@
 const { pool, query } = require('./db');
 const { sendMail } = require('./mail');
-const { broadcast, pushEnabled } = require('./push');
+const { sendToUser, pushEnabled } = require('./push');
 
-const SELECT_DUE = `SELECT r.*, p.name AS profile_name, p.email AS profile_email
-                      FROM reminders r JOIN profiles p ON p.id = r.profile_id`;
+const SELECT_DUE = `SELECT r.*, u.name AS user_name, u.email AS user_email
+                      FROM reminders r JOIN users u ON u.id = r.user_id`;
 
 // Deliver one reminder (email or push) and stamp notified_at so it never
 // repeats. Throws on failure, leaving notified_at NULL so the caller — or the
@@ -11,21 +11,20 @@ const SELECT_DUE = `SELECT r.*, p.name AS profile_name, p.email AS profile_email
 async function deliver(r) {
   if (r.method === 'email') {
     await sendMail({
-      to: r.email || r.profile_email,
+      to: r.email || r.user_email,
       subject: 'Reminder: ' + r.title,
-      text: `Hi ${r.profile_name},\n\nThis is your Dayflow reminder: ${r.title}\n\nDue: ${new Date(r.datetime).toLocaleString()}\n`,
-      html: `<p>Hi ${escapeHtml(r.profile_name)},</p><p>This is your Dayflow reminder:</p>`
+      text: `Hi ${r.user_name},\n\nThis is your Dayflow reminder: ${r.title}\n\nDue: ${new Date(r.datetime).toLocaleString()}\n`,
+      html: `<p>Hi ${escapeHtml(r.user_name)},</p><p>This is your Dayflow reminder:</p>`
         + `<p style="font-size:18px;font-weight:700">${escapeHtml(r.title)}</p>`
         + `<p style="color:#666">Due: ${new Date(r.datetime).toLocaleString()}</p>`,
     });
-    console.log('[scheduler] emailed reminder', r.id, '->', r.email || r.profile_email);
+    console.log('[scheduler] emailed reminder', r.id, '->', r.email || r.user_email);
   } else {
-    const n = await broadcast({
+    const n = await sendToUser(r.user_id, {
       title: 'Dayflow reminder',
       body: r.title,
       tag: 'reminder-' + r.id,
       reminderId: r.id,
-      profile: r.profile_name,
     });
     console.log('[scheduler] pushed reminder', r.id, '->', n, 'device(s)');
   }
@@ -83,8 +82,13 @@ function escapeHtml(s) {
 function startScheduler() {
   const ms = Number(process.env.REMINDER_POLL_MS) || 30000;
   console.log(`[scheduler] started — checking due reminders every ${ms}ms (push: ${pushEnabled() ? 'on' : 'off'})`);
-  tick().catch(() => {});
-  const timer = setInterval(() => tick().catch(() => {}), ms);
+  const both = () => Promise.all([
+    tick().catch(() => {}),
+    // Required lazily: digest.js pulls in push.js, which this module also uses.
+    require('./digest').digestTick().catch(() => {}),
+  ]);
+  both();
+  const timer = setInterval(both, ms);
   timer.unref?.();
   return timer;
 }

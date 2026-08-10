@@ -19,24 +19,30 @@ function ensureConfigured() {
   return true;
 }
 
-async function saveSubscription(sub) {
+// A browser endpoint belongs to whoever last granted permission on it. Signing
+// in as someone else on the same device re-points it, so a reminder is never
+// delivered to the previous account's device.
+async function saveSubscription(userId, sub) {
   if (!sub || !sub.endpoint || !sub.keys) throw new Error('invalid subscription');
   await query(
-    `INSERT INTO push_subscriptions (endpoint, p256dh, auth) VALUES ($1,$2,$3)
-     ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
-    [sub.endpoint, sub.keys.p256dh, sub.keys.auth]
+    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id,
+       p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+    [userId, sub.endpoint, sub.keys.p256dh, sub.keys.auth]
   );
 }
 
-async function deleteSubscription(endpoint) {
-  await query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+async function deleteSubscription(userId, endpoint) {
+  await query('DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2', [endpoint, userId]);
 }
 
-// Send a payload to every stored subscription. Prunes subscriptions the push
-// service reports as gone (404/410). Returns the number of successful sends.
-async function broadcast(payload) {
+// Send a payload to one user's devices. Prunes subscriptions the push service
+// reports as gone (404/410). Returns the number of successful sends.
+async function sendToUser(userId, payload) {
   if (!ensureConfigured()) return 0;
-  const { rows } = await query('SELECT endpoint, p256dh, auth FROM push_subscriptions');
+  const { rows } = await query(
+    'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1', [userId]
+  );
   let ok = 0;
   const data = JSON.stringify(payload);
   await Promise.all(
@@ -47,7 +53,7 @@ async function broadcast(payload) {
         ok++;
       } catch (e) {
         if (e.statusCode === 404 || e.statusCode === 410) {
-          await deleteSubscription(r.endpoint).catch(() => {});
+          await deleteSubscription(userId, r.endpoint).catch(() => {});
         } else {
           console.error('[push] send failed:', e.statusCode || e.message);
         }
@@ -57,4 +63,4 @@ async function broadcast(payload) {
   return ok;
 }
 
-module.exports = { pushEnabled, saveSubscription, deleteSubscription, broadcast };
+module.exports = { pushEnabled, saveSubscription, deleteSubscription, sendToUser };

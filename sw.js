@@ -1,7 +1,11 @@
 // Dayflow service worker — powers (1) installable PWA + basic offline shell,
 // and (2) reminder push notifications (even when the app/tab is closed).
 
-const CACHE = 'dayflow-shell-v2';
+// Bump this on every release that changes index.html / support.js. The fetch
+// handler below is cache-first, and `install` only re-runs when THIS file
+// changes — so without a bump, an already-installed app keeps serving the old
+// shell from cache forever. v3 = the per-user accounts rewrite.
+const CACHE = 'dayflow-shell-v3';
 const SHELL = [
   './',
   './index.html',
@@ -24,30 +28,40 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Cache-first for same-origin GETs (the app shell). CDN scripts always go to
-// the network. The API must NEVER be cached: on Vercel it is served from the
-// same origin (/api/*), so without this guard the SW would serve stale data
-// (e.g. a profile's auth toggle reverting after the app is reopened).
+// The whole app — markup, logic, everything — lives in index.html and
+// support.js. Serving those from cache first means a deploy is invisible until
+// the cache name changes, and one forgotten CACHE bump ships a client that talks
+// to an API that has moved on. So those two are NETWORK-FIRST: always try the
+// network, fall back to the cached copy only when offline. Everything else
+// (icons, fonts, the background image) is immutable enough for cache-first.
+const NETWORK_FIRST = ['/', '/index.html', '/support.js', '/sw.js', '/manifest.webmanifest'];
+
+// The API must NEVER be cached: on Vercel it is served from the same origin
+// (/api/*), so without this guard the SW would serve stale data.
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return; // network-only, never cache
-  e.respondWith(
-    caches.match(req).then((cached) =>
-      cached ||
-      fetch(req)
-        .then((res) => {
-          if (res && res.ok && res.type === 'basic') {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => cached)
-    )
-  );
+
+  const scope = new URL(self.registration.scope).pathname.replace(/\/$/, '');
+  const rel = url.pathname.startsWith(scope) ? url.pathname.slice(scope.length) || '/' : url.pathname;
+  const fresh = req.mode === 'navigate' || NETWORK_FIRST.includes(rel);
+
+  const store = (res) => {
+    if (res && res.ok && res.type === 'basic') {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(req, copy));
+    }
+    return res;
+  };
+
+  if (fresh) {
+    e.respondWith(fetch(req).then(store).catch(() => caches.match(req)));
+    return;
+  }
+  e.respondWith(caches.match(req).then((cached) => cached || fetch(req).then(store).catch(() => cached)));
 });
 
 // ---- Reminder push notifications ----
