@@ -39,16 +39,19 @@
   @keyframes spin { to{transform:rotate(360deg);} }
   @keyframes pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.16);} }
   /* ---- Mobile responsive tweaks (inline styles overridden with !important) ---- */
+  @media (max-width: 700px) {
+    /* Three money cards do not fit a phone: keep Income/Expenses side by side
+       and give Balance the full width underneath rather than letting the row
+       overflow the screen. */
+    .df-stat-grid { grid-template-columns: 1fr 1fr !important; }
+    .df-stat-grid > div:last-child { grid-column: 1 / -1; }
+  }
   @media (max-width: 560px) {
     /* stack the two expense charts so neither is cramped / clips its legend */
     .df-chart-grid { grid-template-columns: 1fr !important; }
     /* tighter 2-up module grid with more compact cards */
     .df-dash-grid { grid-template-columns: 1fr 1fr !important; gap: 12px !important; }
     .df-dash-card { padding: 18px 14px !important; border-radius: 20px !important; }
-  }
-  @media (max-width: 380px) {
-    /* very narrow phones: drop the income/expense/balance stats to 2 columns */
-    .df-stat-grid { grid-template-columns: 1fr 1fr !important; }
   }
   /* Keep bottom-sheet content clear of the phone/tablet system navigation bar
      (home indicator / browser toolbar). env() is 0 on desktop, so no change there. */
@@ -98,6 +101,17 @@
       </sc-if>
       <p style="font-size:12.5px; color:#B6A99F; margin:22px 0 0; line-height:1.5;">Only your Google name, email and picture are used. Nothing is shared with anyone else.</p>
     </div>
+  </div>
+  </sc-if>
+
+  <!-- ============ OFFLINE BANNER ============ -->
+  <sc-if value="{{ isOffline }}">
+  <div style="position:fixed; left:0; right:0; top:0; z-index:60; display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap; padding:calc(9px + env(safe-area-inset-top)) 16px 9px; background:#FBE3D8; color:#8C3D26; font-size:13.5px; font-weight:800; box-shadow:0 2px 10px rgba(18,20,32,.08);">
+    <span style="display:flex; align-items:center; gap:8px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M2 2l20 20"></path><path d="M5 12.55a11 11 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path><path d="M1.42 9a15.9 15.9 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
+      Offline — showing your last saved day. Changes can’t be saved.
+    </span>
+    <button onClick="{{ onReconnect }}" style="border:none; background:#8C3D26; color:#fff; font-size:12.5px; font-weight:800; padding:6px 14px; border-radius:999px; cursor:pointer;" style-hover="filter:brightness(1.12);">Try again</button>
   </div>
   </sc-if>
 
@@ -187,11 +201,10 @@
         </div>
         <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Spending cycle starts on</label>
         <p style="font-size:13px; font-weight:600; color:#9A8F88; margin:6px 0 10px; line-height:1.45;">{{ cycleHint }}</p>
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
+        <div style="display:flex; align-items:center; gap:10px;">
           <input value="{{ fSetCycleDay }}" onInput="{{ onSetCycleInput }}" type="number" min="1" max="31" style="width:96px; padding:12px 15px; font-size:16px; font-weight:700; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ accent }}; background:#fff;" />
           <span style="font-size:14px; font-weight:700; color:#7C7068;">of each month</span>
         </div>
-        <button onClick="{{ onSaveSettings }}" style="{{ setSaveStyle }}" style-hover="filter:brightness(1.05);">{{ setSaveLabel }}</button>
       </div>
 
       <button onClick="{{ onFaceSetup }}" style="width:100%; margin-bottom:12px; border:1px solid #E0D8D0; background:#fff; color:#2E2A27; padding:16px 18px; border-radius:20px; font-size:16px; font-weight:800; cursor:pointer; display:flex; align-items:center; gap:14px; text-align:left;" style-hover="background:#F5F0EC;">
@@ -251,6 +264,23 @@
 
       <button onClick="{{ onSignOut }}" style="width:100%; margin-bottom:12px; border:1px solid #E0D8D0; background:#fff; color:#5A5250; padding:16px 18px; border-radius:20px; font-size:16px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Sign out</button>
       <button onClick="{{ onDeleteAccount }}" style="width:100%; border:none; background:none; color:#B6A99F; padding:14px; font-size:14px; font-weight:800; cursor:pointer;" style-hover="color:#D2553A;">Delete my account and all data</button>
+      <sc-if value="{{ isSettingsDirty }}">
+        <div style="height:calc(80px + env(safe-area-inset-bottom));"></div>
+      </sc-if>
+    </div>
+
+  </div>
+  </sc-if>
+
+  <!-- Settings save bar — exists only while something is actually unsaved, and
+       rendered at root (outside the animated/transformed screen) so it stays
+       stuck to the bottom of the viewport instead of the bottom of the page. -->
+  <sc-if value="{{ isSettingsDirty }}">
+  <div style="position:fixed; left:0; right:0; bottom:0; z-index:155; padding:14px clamp(20px,5vw,48px) calc(14px + env(safe-area-inset-bottom)); background:rgba(255,255,255,.94); backdrop-filter:blur(12px); border-top:1px solid #E0D8D0; animation:sheetIn .28s cubic-bezier(.2,.8,.2,1) both;">
+    <div style="max-width:560px; margin:0 auto; display:flex; align-items:center; gap:12px;">
+      <span style="flex:1; min-width:0; font-size:13.5px; font-weight:700; color:#9A8F88;">You have unsaved changes</span>
+      <button onClick="{{ onDiscardSettings }}" style="border:1px solid #E0D8D0; background:#fff; color:#5A5250; padding:13px 18px; border-radius:16px; font-size:15px; font-weight:800; cursor:pointer; flex:none;" style-hover="background:#F5F0EC;">Discard</button>
+      <button onClick="{{ onSaveSettings }}" style="{{ setSaveStyle }}" style-hover="filter:brightness(1.05);">{{ setSaveLabel }}</button>
     </div>
   </div>
   </sc-if>
@@ -306,7 +336,9 @@
           </div>
           <div style="min-width:0;">
             <div style="font-size:22px; font-weight:900; letter-spacing:-.02em; line-height:1.1;">{{ moduleTitle }}</div>
+            <sc-if value="{{ showHeaderDate }}">
             <div style="font-size:13px; font-weight:700; color:#9A8F88; white-space:nowrap;">{{ dateLabel }}</div>
+            </sc-if>
           </div>
         </div>
       </div>
@@ -472,17 +504,17 @@
       <sc-if value="{{ isExpenseList }}" hint-placeholder-val="{{ true }}">
       <div>
         <div class="df-stat-grid" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:18px;">
-          <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px;">
+          <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px; min-width:0;">
             <div style="font-size:12px; font-weight:800; color:#5B9A8B; text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px;">Income</div>
-            <div style="font-size:22px; font-weight:900; letter-spacing:-.02em; color:#2E2A27;">{{ statIncome }}</div>
+            <div style="font-size:clamp(17px,4.6vw,22px); font-weight:900; letter-spacing:-.02em; color:#2E2A27; overflow-wrap:anywhere;">{{ statIncome }}</div>
             <div style="font-size:12px; font-weight:700; color:#9A8F88; margin-top:2px;">this cycle</div>
           </div>
-          <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px;">
+          <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px; min-width:0;">
             <div style="font-size:12px; font-weight:800; color:#E8694A; text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px;">Expenses</div>
-            <div style="font-size:22px; font-weight:900; letter-spacing:-.02em; color:#2E2A27;">{{ statExpense }}</div>
+            <div style="font-size:clamp(17px,4.6vw,22px); font-weight:900; letter-spacing:-.02em; color:#2E2A27; overflow-wrap:anywhere;">{{ statExpense }}</div>
             <div style="font-size:12px; font-weight:700; color:#9A8F88; margin-top:2px;">this cycle</div>
           </div>
-          <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px;">
+          <div style="background:#fff; border:1px solid #E0D8D0; border-radius:20px; padding:16px 18px; min-width:0; text-align:center;">
             <div style="font-size:12px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px;">Balance</div>
             <div style="{{ netStyle }}">{{ statNet }}</div>
             <div style="font-size:12px; font-weight:700; color:#9A8F88; margin-top:2px;">{{ netLabel }}</div>
@@ -528,9 +560,6 @@
           <sc-for list="{{ expenseItems }}" as="e" hint-placeholder-count="3">
             <div style="{{ e.outerStyle }}">
               <div style="display:flex; align-items:center; gap:12px; background:#fff; border:1px solid #E0D8D0; border-radius:16px; padding:13px 14px;">
-                <div style="width:38px; height:38px; border-radius:12px; background:{{ e.catColor }}22; display:flex; align-items:center; justify-content:center; flex:none;">
-                  <div style="width:10px; height:10px; border-radius:50%; background:{{ e.catColor }};"></div>
-                </div>
                 <button onClick="{{ e.onEdit }}" style="flex:1; min-width:0; border:none; background:none; padding:0; text-align:left; cursor:pointer;">
                   <span style="display:block; font-size:15px; font-weight:800; color:#2E2A27; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ e.title }}</span>
                   <span style="display:flex; align-items:center; flex-wrap:wrap; gap:4px 7px; margin-top:3px;">
@@ -991,10 +1020,18 @@ class Component extends DCLogic {
   avatarColors = ['#E8694A','#E0A458','#5B9A8B','#6B8CAE','#C97B84','#8B9A6B','#9B7BA8','#D98C5F'];
   // API base: explicit override wins; on localhost talk to the dev API on :3088;
   // anywhere else (e.g. the deployed domain) use the same origin + /api.
+  // Explicit override wins. Otherwise: a page served from one of the static dev
+  // ports means the API is the separate dev server on :3088 of the SAME host —
+  // which is what makes testing from a phone over the LAN work, since there the
+  // hostname is an IP, not localhost. Anywhere else (the deployed domain) the
+  // API is a serverless function at the same origin under /api.
+  DEV_STATIC_PORTS = ['8088','8000','3000','5173'];
   API = (typeof window!=='undefined' && window.DAYFLOW_API_BASE)
-    || ((typeof location!=='undefined' && /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname))
+    || (typeof location==='undefined' || !location.origin || location.origin==='null'
           ? 'http://localhost:3088/api'
-          : ((typeof location!=='undefined' && location.origin && location.origin!=='null') ? location.origin+'/api' : 'http://localhost:3088/api'));
+          : (this.DEV_STATIC_PORTS.includes(location.port)
+              ? location.protocol+'//'+location.hostname+':3088/api'
+              : location.origin+'/api'));
   RESET_KEY = 'dayflow_lastReset';
   DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   CUR = 'AED';
@@ -1013,7 +1050,7 @@ class Component extends DCLogic {
   constructor(props) {
     super(props);
     this.state = {
-      loading: true, loadError: null, toast: null,
+      loading: true, loadError: null, offline: false, toast: null,
       screen: '', user: null, signingIn: false, authError: '',
       tasks: [], reminders: [], expenses: [], categories: [], vault: [], vaultLoaded: false,
       // filterCats holds concrete category keys; empty means "everything".
@@ -1043,6 +1080,12 @@ class Component extends DCLogic {
 
   componentDidMount() {
     if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    // The browser's own connectivity events: drop straight into read-only mode
+    // when the network goes, and re-sync the moment it comes back.
+    this._onOnline=()=>{if(this.state.offline)this.retryLoad();};
+    this._onOffline=()=>{if(this.state.user&&!this.state.offline)this.setState({offline:true});};
+    window.addEventListener('online',this._onOnline);
+    window.addEventListener('offline',this._onOffline);
     this.boot();
   }
   componentDidUpdate() {
@@ -1051,6 +1094,8 @@ class Component extends DCLogic {
     if(this.barChartEl) this.renderBarChart();
   }
   componentWillUnmount() {
+    window.removeEventListener('online',this._onOnline);
+    window.removeEventListener('offline',this._onOffline);
     ['spendChart','donutChart','barChart'].forEach(k=>{if(this[k]){this[k].destroy();this[k]=null;}});
   }
 
@@ -1125,8 +1170,52 @@ class Component extends DCLogic {
     return null;
   }
   saveSession(token,expiresAt){this.authToken=token;try{localStorage.setItem(this.SESSION_KEY,JSON.stringify({token,exp:expiresAt||0}));}catch(e){}}
-  clearSession(){this.authToken=null;this.setStepUp(null,0);try{localStorage.removeItem(this.SESSION_KEY);}catch(e){}}
+  clearSession(){this.authToken=null;this.setStepUp(null,0);try{localStorage.removeItem(this.SESSION_KEY);}catch(e){}this.clearSnapshot();}
+  // ---- offline snapshot -------------------------------------------------
+  // The last successful /bootstrap, kept so a device that has already signed in
+  // can still SHOW the day with no network. Read-only: nothing is queued, and
+  // every write is refused while offline (see api()). The vault is deliberately
+  // never cached -- it is encrypted with a server key and decrypted server-side,
+  // so a local copy would be plaintext secrets sitting on disk.
+  SNAP_KEY = 'dayflow_snapshot';
+  saveSnapshot(b){
+    try{localStorage.setItem(this.SNAP_KEY,JSON.stringify({
+      at:Date.now(),user:b.user,tasks:b.tasks||[],reminders:b.reminders||[],
+      expenses:b.expenses||[],categories:b.categories||[],
+    }));}catch(e){/* quota or private mode -- offline is a bonus, never a blocker */}
+  }
+  loadSnapshot(){
+    try{const s=JSON.parse(localStorage.getItem(this.SNAP_KEY)||'null');
+      if(s&&s.user&&s.user.id)return s;}catch(e){}
+    return null;
+  }
+  clearSnapshot(){try{localStorage.removeItem(this.SNAP_KEY);}catch(e){}}
+  // A rejected fetch (no response at all) has no .status -- that is the network
+  // being down. An HTTP error means the server answered and is a real failure.
+  isNetworkError(e){return !!e&&e.status===undefined;}
+  // Paint the cached day. Skips dailyReset/timezone/push on purpose: all three
+  // write to the server, and a reset recorded locally but never persisted would
+  // silently lose the real state.
+  hydrateFromSnapshot(snap){
+    this.setState({
+      user:snap.user,
+      tasks:(snap.tasks||[]).map(t=>this.mapTask(t)),
+      reminders:(snap.reminders||[]).map(r=>this.mapReminder(r)),
+      expenses:(snap.expenses||[]).map(e=>this.mapExpense(e)),
+      categories:snap.categories||[],
+      vault:[],vaultLoaded:false,
+      loading:false,loadError:null,offline:true,
+      screen:this.state.screen==='vault'?'dashboard':(this.state.screen||'dashboard'),
+      cycleOffset:0,
+    });
+  }
   api(method,path,body,stepUp){
+    // Read-only offline: refuse every write rather than let it look saved.
+    if(this.state.offline&&method!=='GET'){
+      const err=new Error("You're offline — this can’t be saved until you reconnect.");
+      err.offline=true;
+      return Promise.reject(err);
+    }
     const headers={};
     if(body)headers['Content-Type']='application/json';
     if(this.authToken)headers['Authorization']='Bearer '+this.authToken;
@@ -1250,6 +1339,7 @@ class Component extends DCLogic {
     this.authToken=sess.token;
     try{
       const b=await this.api('GET','/bootstrap').catch(e=>{if(e.status===404)e.accountGone=true;throw e;});
+      this.saveSnapshot(b);
       let tasks=(b.tasks||[]).map(t=>this.mapTask(t));
       tasks=await this.dailyReset(tasks,b.user&&b.user.id);
       this.setState({
@@ -1259,12 +1349,16 @@ class Component extends DCLogic {
         expenses:(b.expenses||[]).map(e=>this.mapExpense(e)),
         categories:b.categories||[],
         vault:[],vaultLoaded:false,
-        loading:false,loadError:null,screen:'dashboard',cycleOffset:0,
+        loading:false,loadError:null,offline:false,screen:'dashboard',cycleOffset:0,
       });
       if(typeof Notification!=='undefined'&&Notification.permission==='granted')this.initPush(false);
       this.syncTimezone(b.user);
     }catch(e){
       if(this.handleAuthError(e))return;
+      // No network but a cached day and a still-valid session? Show it read-only
+      // instead of the dead-end error screen.
+      const snap=this.isNetworkError(e)&&this.loadSnapshot();
+      if(snap){this.hydrateFromSnapshot(snap);this.toast('Offline — showing your last saved day','error');return;}
       this.setState({loading:false,loadError:(e&&e.message)||'Could not reach the server'});
     }
   }
@@ -1281,7 +1375,8 @@ class Component extends DCLogic {
   }
   retryLoad(){this.setState({loading:true,loadError:null});this.boot();}
   reload(){
-    this.api('GET','/bootstrap').then(b=>this.setState({
+    this.api('GET','/bootstrap').then(b=>{this.saveSnapshot(b);return b;}).then(b=>this.setState({
+      offline:false,
       user:b.user,tasks:(b.tasks||[]).map(t=>this.mapTask(t)),
       reminders:(b.reminders||[]).map(r=>this.mapReminder(r)),
       expenses:(b.expenses||[]).map(e=>this.mapExpense(e)),
@@ -1290,6 +1385,12 @@ class Component extends DCLogic {
   }
   syncFail(e){
     if(this.handleAuthError(e))return;
+    // Offline: the optimistic update in the caller was never persisted, so roll
+    // the screen back to the cached truth rather than leaving a phantom edit.
+    if(e&&e.offline||this.isNetworkError(e)){
+      const snap=this.loadSnapshot();
+      if(snap){this.hydrateFromSnapshot(snap);this.toast("You're offline — that change wasn’t saved",'error');return;}
+    }
     // A 403 from a vault route means the step-up expired mid-session. Drop the
     // stale token and re-lock rather than leaving the tab in a state where
     // every vault write fails and nothing tells the user why.
@@ -1326,6 +1427,9 @@ class Component extends DCLogic {
 
   // ---- navigation -------------------------------------------------------
   openModule(key){
+    // The vault is decrypted server-side and is never cached, so it is the one
+    // module that simply cannot open without a connection.
+    if(key==='vault'&&this.state.offline){this.toast('The vault needs a connection','error');return;}
     if(key==='vault'&&!this.state.vaultLoaded){this.openUnlock('vault');return;}
     this.setState({screen:key,expenseView:'list',cycleOffset:0,filterCats:[],filterOpen:false});
   }
@@ -1349,6 +1453,9 @@ class Component extends DCLogic {
       fSetWrapupHour:String(u.wrapupHour==null?20:u.wrapupHour),
       setBusy:false});
   }
+  // Discard rewinds the form to the saved account, which is what openSettings
+  // already builds — minus the screen change it also does.
+  discardSettings(){this.openSettings();}
   // Toggles save immediately — a switch that needs a separate Save button is a
   // switch people think is broken.
   toggleNotify(field){
@@ -1551,13 +1658,42 @@ class Component extends DCLogic {
     this.stopCamera();
     const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:480},height:{ideal:480}},audio:false});
     this._stream=stream;
-    if(video){video.srcObject=stream;try{await video.play();}catch(e){}}
+    this._playError=null;
+    if(video){video.srcObject=stream;try{await video.play();}catch(e){this._playError=e;}}
     return stream;
   }
   stopCamera(){if(this._stream){this._stream.getTracks().forEach(t=>t.stop());this._stream=null;}}
-  async captureDescriptor(video){
-    await this.loadFaceModels();
-    const det=await faceapi.detectSingleFace(video,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.4})).withFaceLandmarks().withFaceDescriptor();
+  withTimeout(p,ms,msg){
+    let t;
+    return Promise.race([
+      Promise.resolve(p).finally(()=>clearTimeout(t)),
+      new Promise((_,rej)=>{t=setTimeout(()=>rej(new Error(msg)),ms);}),
+    ]);
+  }
+  // face-api waits internally for the media to be ready, and that wait never
+  // resolves if the camera has not produced a frame yet — videoWidth stays 0 on
+  // a phone for noticeably longer than on a laptop. Check it ourselves so a
+  // stalled camera fails loudly instead of hanging the dialog.
+  waitForVideoFrame(video,ms){
+    const ready=()=>video.readyState>=2&&video.videoWidth>0&&video.videoHeight>0;
+    if(ready())return Promise.resolve();
+    return this.withTimeout(new Promise((resolve)=>{
+      const tick=setInterval(()=>{if(ready()){clearInterval(tick);resolve();}},100);
+      this._frameTick=tick;
+    }),ms,'The camera did not start'+(this._playError?(' ('+(this._playError.name||this._playError.message)+')'):'')+' — close this, check the camera permission, and try again.')
+      .finally(()=>clearInterval(this._frameTick));
+  }
+  // onStatus reports the slow part. The three model files total roughly 6.5 MB,
+  // nearly all of it faceRecognitionNet, so on a phone the first scan can look
+  // frozen when it is really still downloading.
+  async captureDescriptor(video,onStatus){
+    await this.waitForVideoFrame(video,10000);
+    if(!this._faceP&&onStatus)onStatus('Downloading the face model (~6 MB) — first time only…');
+    await this.withTimeout(this.loadFaceModels(),90000,'The face model download timed out — check your connection and try again, or use an emailed code.');
+    if(onStatus)onStatus('Scanning…');
+    const det=await this.withTimeout(
+      faceapi.detectSingleFace(video,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.4})).withFaceLandmarks().withFaceDescriptor(),
+      30000,'The scan timed out — try again, or use an emailed code.');
     return det?Array.from(det.descriptor):null;
   }
 
@@ -1572,9 +1708,9 @@ class Component extends DCLogic {
   setEnrollVideo=(el)=>{if(el){this._enrollVideo=el;this.startCamera(el).catch(e=>this.setState({enrollStatus:'Camera unavailable: '+(e.message||e.name)}));}else{this._enrollVideo=null;}};
   async doEnroll(){
     const video=this._enrollVideo;if(!video||this.state.enrollBusy)return;
-    this.setState({enrollBusy:true,enrollStatus:'Loading model & scanning…'});
+    this.setState({enrollBusy:true,enrollStatus:'Starting the camera…'});
     try{
-      const desc=await this.captureDescriptor(video);
+      const desc=await this.captureDescriptor(video,(m)=>this.setState({enrollStatus:m}));
       if(!desc){this.setState({enrollBusy:false,enrollStatus:'No face detected — face the camera in good light and try again.'});return;}
       const u=await this.api('POST','/me/face',{descriptor:desc},true);
       this.setState({user:u});this.toast('Face unlock enabled');this.closeEnroll();
@@ -1604,9 +1740,9 @@ class Component extends DCLogic {
   backToChoose(){this.stopCamera();this.setState({unlockMode:'choose',unlockBusy:false,unlockStatus:''});}
   async doFaceUnlock(){
     const video=this._unlockVideo;if(!video||this.state.unlockBusy)return;
-    this.setState({unlockBusy:true,unlockStatus:'Scanning…'});
+    this.setState({unlockBusy:true,unlockStatus:'Starting the camera…'});
     try{
-      const desc=await this.captureDescriptor(video);
+      const desc=await this.captureDescriptor(video,(m)=>this.setState({unlockStatus:m}));
       if(!desc){this.setState({unlockBusy:false,unlockStatus:'No face detected — try again.'});return;}
       const res=await this.api('POST','/me/face/match',{descriptor:desc});
       if(res&&res.matched){this.setStepUp(res.stepUpToken,res.expiresAt);this.unlockSuccess();}
@@ -2031,7 +2167,7 @@ class Component extends DCLogic {
     const net=totalInc-totalExp;
     const statIncome=this.fmtCurrency(totalInc),statExpense=this.fmtCurrency(totalExp);
     const statNet=(net>=0?'+':'')+this.fmtCurrency(Math.abs(net));
-    const netStyle='font-size:22px;font-weight:900;letter-spacing:-.02em;color:'+(net>=0?'#5B9A8B':'#E8694A')+';';
+    const netStyle='font-size:clamp(17px,4.6vw,22px);font-weight:900;letter-spacing:-.02em;overflow-wrap:anywhere;color:'+(net>=0?'#5B9A8B':'#E8694A')+';';
     const cycleLabel=this.fmtDayMonth(w.start)+' – '+this.fmtDayMonth(w.last);
     const cycleSubLabel=s.cycleOffset===0?'Current cycle':(s.cycleOffset<0?Math.abs(s.cycleOffset)+' cycle'+(s.cycleOffset===-1?'':'s')+' ago':'in '+s.cycleOffset+' cycle'+(s.cycleOffset===1?'':'s'));
     const hasExpenseData=cycleExp.some(e=>e.type==='expense');
@@ -2071,7 +2207,7 @@ class Component extends DCLogic {
       const ci=this.catInfo(e.type==='income'?'other':e.category);
       const parent=e.type==='income'?null:this.state.categories.find(x=>x.key===(ci.parent_key||''));
       const catC=e.type==='income'?'#5B9A8B':ci.color;
-      return{id:e.id,title:e.title,catLabel:e.type==='income'?'Income':((parent?parent.label+' · ':'')+ci.label),catColor:catC,
+      return{id:e.id,title:e.title,catLabel:e.type==='income'?'Income':((parent?parent.label+' · ':'')+ci.label),
         catBadge:'font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;color:'+catC+';background:'+catC+'22;',
         dateDisplay:this.fmtExpDate(e.date),amountDisplay:(e.type==='income'?'+':'-')+this.fmtCurrency(e.amount),
         amountStyle:'font-size:16px;font-weight:900;color:'+(e.type==='income'?'#5B9A8B':'#E8694A')+';white-space:nowrap;flex:none;',
@@ -2181,11 +2317,13 @@ class Component extends DCLogic {
     return{
       fontFamily,accent,
       isLoading:s.loading,isLoadError:!!s.loadError,loadErrorMsg:s.loadError||'',onRetry:()=>this.retryLoad(),
+      isOffline:!!s.offline&&!!s.user&&!s.loading,onReconnect:()=>this.retryLoad(),
       // welcome
       isWelcome:screen==='welcome'&&!s.loading,setGsiRef:this.setGsiRef,signingIn:s.signingIn,
       hasAuthError:!!s.authError,authError:s.authError,
       // dashboard
       isDashboard:screen==='dashboard',modules,dateLabel:this.dateLabel(),
+      showHeaderDate:!isExpenses,
       greeting:greetWord+', '+((u.name||'').split(' ')[0]||'there'),greetingSub,
       showNotifPrompt:screen==='dashboard'&&notifPerm==='default'&&!s.notifPromptDismissed,
       onDismissNotifPrompt:()=>this.setState({notifPromptDismissed:true}),
@@ -2198,8 +2336,10 @@ class Component extends DCLogic {
       onSetNameInput:(e)=>this.setState({fSetName:e.target.value}),
       onSetCycleInput:(e)=>this.setState({fSetCycleDay:e.target.value}),
       cycleHint:'Budgets and charts run from this day to the day before it next month. Currently '+this.fmtDayMonth(w.start)+' – '+this.fmtDayMonth(w.last)+'.',
-      onSaveSettings:()=>this.saveSettings(),setSaveLabel:s.setBusy?'Saving…':'Save changes',
-      setSaveStyle:'width:100%;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+((setDirty&&!s.setBusy)?'1':'.45')+';pointer-events:'+((setDirty&&!s.setBusy)?'auto':'none')+';',
+      isSettingsDirty:screen==='settings'&&setDirty,
+      onSaveSettings:()=>this.saveSettings(),onDiscardSettings:()=>this.discardSettings(),
+      setSaveLabel:s.setBusy?'Saving…':'Save changes',
+      setSaveStyle:'padding:13px 22px;border:none;border-radius:16px;font-size:15px;font-weight:800;cursor:pointer;color:#fff;flex:none;background:'+accent+';opacity:'+(s.setBusy?'.45':'1')+';pointer-events:'+(s.setBusy?'none':'auto')+';',
       onFaceSetup:()=>this.faceSetup(),faceStatusLabel:u.faceEnrolled?'Enrolled — tap to re-capture or remove':'Not set up — you can still use an emailed code',
       faceIconStyle:'width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex:none;'+(u.faceEnrolled?'background:'+accent+';color:#fff;':'background:#F0EAE4;color:#7C7068;'),
       onSignOut:()=>this.signOut(),onDeleteAccount:()=>this.deleteAccount(),

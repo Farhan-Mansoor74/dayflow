@@ -4,8 +4,8 @@
 // Bump this on every release that changes index.html / support.js. The fetch
 // handler below is cache-first, and `install` only re-runs when THIS file
 // changes — so without a bump, an already-installed app keeps serving the old
-// shell from cache forever. v3 = the per-user accounts rewrite.
-const CACHE = 'dayflow-shell-v3';
+// shell from cache forever. v4 = read-only offline mode.
+const CACHE = 'dayflow-shell-v4';
 const SHELL = [
   './',
   './index.html',
@@ -58,7 +58,12 @@ self.addEventListener('fetch', (e) => {
   };
 
   if (fresh) {
-    e.respondWith(fetch(req).then(store).catch(() => caches.match(req)));
+    // Offline navigations fall back to the cached shell even when the exact
+    // request URL was never cached — otherwise a reload offline shows the
+    // browser's dinosaur instead of the app.
+    e.respondWith(fetch(req).then(store).catch(
+      () => caches.match(req).then((c) => c || (req.mode === 'navigate' ? caches.match('./index.html') : undefined))
+    ));
     return;
   }
   e.respondWith(caches.match(req).then((cached) => cached || fetch(req).then(store).catch(() => cached)));
