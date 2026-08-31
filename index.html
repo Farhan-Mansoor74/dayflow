@@ -1209,7 +1209,7 @@ class Component extends DCLogic {
       cycleOffset:0,
     });
   }
-  api(method,path,body,stepUp){
+  api(method,path,body,stepUp,timeoutMs){
     // Read-only offline: refuse every write rather than let it look saved.
     if(this.state.offline&&method!=='GET'){
       const err=new Error("You're offline — this can’t be saved until you reconnect.");
@@ -1220,13 +1220,23 @@ class Component extends DCLogic {
     if(body)headers['Content-Type']='application/json';
     if(this.authToken)headers['Authorization']='Bearer '+this.authToken;
     if(stepUp&&this.stepUpToken)headers['X-StepUp-Token']=this.stepUpToken;
-    return fetch(this.API+path,{method,headers,body:body?JSON.stringify(body):undefined})
+    // No fetch call in this app had a bound before: a stalled server or a
+    // paused/unreachable database left the caller's promise hanging forever,
+    // which is what left the face-unlock dialog stuck on "Scanning…".
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),timeoutMs||20000);
+    return fetch(this.API+path,{method,headers,body:body?JSON.stringify(body):undefined,signal:controller.signal})
       .then(async res=>{
         if(res.status===204)return null;
         let data=null;try{data=await res.json();}catch(e){}
         if(!res.ok){const err=new Error((data&&data.error)||('HTTP '+res.status));err.status=res.status;throw err;}
         return data;
-      });
+      })
+      .catch(e=>{
+        if(e&&e.name==='AbortError')throw new Error('The server did not respond — check your connection and try again.');
+        throw e;
+      })
+      .finally(()=>clearTimeout(timer));
   }
   // 401 = the session is missing or expired. 404 on an account-level read means
   // the account itself is gone (deleted on another device, or the database was
@@ -1712,7 +1722,7 @@ class Component extends DCLogic {
     try{
       const desc=await this.captureDescriptor(video,(m)=>this.setState({enrollStatus:m}));
       if(!desc){this.setState({enrollBusy:false,enrollStatus:'No face detected — face the camera in good light and try again.'});return;}
-      const u=await this.api('POST','/me/face',{descriptor:desc},true);
+      const u=await this.api('POST','/me/face',{descriptor:desc},true,15000);
       this.setState({user:u});this.toast('Face unlock enabled');this.closeEnroll();
     }catch(e){this.setState({enrollBusy:false,enrollStatus:'Error: '+(e.message||'try again')});}
   }
@@ -1744,7 +1754,7 @@ class Component extends DCLogic {
     try{
       const desc=await this.captureDescriptor(video,(m)=>this.setState({unlockStatus:m}));
       if(!desc){this.setState({unlockBusy:false,unlockStatus:'No face detected — try again.'});return;}
-      const res=await this.api('POST','/me/face/match',{descriptor:desc});
+      const res=await this.api('POST','/me/face/match',{descriptor:desc},false,15000);
       if(res&&res.matched){this.setStepUp(res.stepUpToken,res.expiresAt);this.unlockSuccess();}
       else this.setState({unlockBusy:false,unlockStatus:'Not recognized — try again or use an emailed code.'});
     }catch(e){this.setState({unlockBusy:false,unlockStatus:'Error: '+(e.message||'try again')});}
