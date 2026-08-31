@@ -1701,9 +1701,13 @@ class Component extends DCLogic {
     if(!this._faceP&&onStatus)onStatus('Downloading the face model (~6 MB) — first time only…');
     await this.withTimeout(this.loadFaceModels(),90000,'The face model download timed out — check your connection and try again, or use an emailed code.');
     if(onStatus)onStatus('Scanning…');
+    // inputSize 224 (not 320) and a 60s cap: the first inference on a phone
+    // pays for WebGL shader compilation on top of running three nets on
+    // weaker mobile hardware, which regularly took longer than 30s and made
+    // the scan time out every time on mobile while working fine on laptops.
     const det=await this.withTimeout(
-      faceapi.detectSingleFace(video,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.4})).withFaceLandmarks().withFaceDescriptor(),
-      30000,'The scan timed out — try again, or use an emailed code.');
+      faceapi.detectSingleFace(video,new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.4})).withFaceLandmarks().withFaceDescriptor(),
+      60000,'The scan timed out — try again, or use an emailed code.');
     return det?Array.from(det.descriptor):null;
   }
 
