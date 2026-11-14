@@ -431,17 +431,8 @@ router.post('/categories', h(async (req, res) => {
 
   let position;
   if (parentKey) {
-    // Only two levels: a sub-category's parent must itself be top-level.
-    const { rows } = await query(
-      'SELECT parent_key FROM categories WHERE user_id = $1 AND key = $2', [req.userId, parentKey]
-    );
-    if (!rows[0]) return res.status(400).json({ error: 'unknown parent category' });
-    if (rows[0].parent_key) return res.status(400).json({ error: 'a sub-category cannot have sub-categories' });
-    const { rows: [{ next }] } = await query(
-      'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM categories WHERE user_id = $1 AND parent_key = $2',
-      [req.userId, parentKey]
-    );
-    position = next;
+    await checkParent(pool, req.userId, parentKey);
+    position = await nextChildPosition(pool, req.userId, parentKey);
   } else {
     // Sort new top-level categories after the existing ones but before 'other'.
     const { rows: [{ next }] } = await query(
@@ -451,73 +442,164 @@ router.post('/categories', h(async (req, res) => {
     position = next;
   }
 
-  const row = await insert('categories', {
-    user_id: req.userId,
-    key: await uniqueKey(req.userId, body.label),
-    ...body,
-    parent_key: parentKey,
-    position,
+  const key = await uniqueKey(req.userId, body.label);
+  const row = await withTx(async (db) => {
+    const { rows } = await db.query(
+      `INSERT INTO categories (user_id, key, label, color, parent_key, position)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.userId, key, body.label, body.color, parentKey, position]
+    );
+    if (parentKey) await adoptParentExpenses(db, req.userId, parentKey, key);
+    return rows[0];
   });
   res.status(201).json(row);
 }));
 
-// Rename / recolour only — `key` and `parent_key` are immutable so existing
-// expenses stay attached and the tree cannot be reshaped underneath them.
+// Rename / recolour, and move a sub-category under a different top-level
+// parent. `key` never changes, so expenses stay attached; moving a
+// sub-category takes its expenses along, since the parent is derived.
 router.patch('/categories/:key', h(async (req, res) => {
   const body = v.categoryBody(req.body, true);
+  const newParent = body.parent_key;
   delete body.parent_key;
-  const cols = Object.keys(body);
-  if (!cols.length) return res.status(400).json({ error: 'no updatable fields provided' });
-  const set = cols.map((c, i) => `${c} = $${i + 1}`);
-  const { rows } = await query(
-    `UPDATE categories SET ${set.join(', ')} WHERE user_id = $${cols.length + 1} AND key = $${cols.length + 2} RETURNING *`,
-    [...cols.map((c) => body[c]), req.userId, req.params.key]
-  );
-  return rows[0] ? res.json(rows[0]) : notFound(res, 'category');
+  const uid = req.userId;
+  const key = req.params.key;
+  const row = await withTx(async (db) => {
+    const { rows: [cur] } = await db.query(
+      'SELECT * FROM categories WHERE user_id = $1 AND key = $2 FOR UPDATE', [uid, key]
+    );
+    if (!cur) throw new v.HttpError(404, 'category not found');
+    if (newParent && newParent !== cur.parent_key) {
+      if (!cur.parent_key) throw new v.HttpError(400, 'only sub-categories can be moved');
+      await checkParent(db, uid, newParent);
+      await db.query(
+        'UPDATE categories SET parent_key = $1, position = $2 WHERE user_id = $3 AND key = $4',
+        [newParent, await nextChildPosition(db, uid, newParent), uid, key]
+      );
+      await adoptParentExpenses(db, uid, newParent, key);
+    }
+    const cols = Object.keys(body);
+    const set = cols.map((c, i) => `${c} = $${i + 1}`);
+    const { rows } = cols.length
+      ? await db.query(
+        `UPDATE categories SET ${set.join(', ')} WHERE user_id = $${cols.length + 1} AND key = $${cols.length + 2} RETURNING *`,
+        [...cols.map((c) => body[c]), uid, key]
+      )
+      : await db.query('SELECT * FROM categories WHERE user_id = $1 AND key = $2', [uid, key]);
+    return rows[0];
+  });
+  res.json(row);
 }));
 
-// Deleting reassigns its expenses — and its sub-categories' expenses — to the
-// builtin 'other' rather than orphaning them, so totals stay correct. The
-// sub-category rows themselves go via ON DELETE CASCADE. One transaction.
+// Deleting reassigns its expenses — and its sub-categories' expenses — to
+// `?moveTo=<key>` (default: Other's first sub-category, or Other itself when it
+// has none), so totals stay correct. The target must be a category expenses
+// can sit on once the delete is done. Sub-category rows go via ON DELETE
+// CASCADE. One transaction.
 router.delete('/categories/:key', h(async (req, res) => {
   const key = req.params.key;
   const uid = req.userId;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows } = await client.query(
+  const moveTo = req.query.moveTo;
+  if (moveTo !== undefined && (typeof moveTo !== 'string' || !moveTo || moveTo.length > 40)) {
+    throw new v.HttpError(400, 'moveTo must be a category key');
+  }
+  const out = await withTx(async (db) => {
+    const { rows } = await db.query(
       'SELECT builtin FROM categories WHERE user_id = $1 AND key = $2 FOR UPDATE', [uid, key]
     );
-    if (!rows[0]) {
-      await client.query('ROLLBACK');
-      return notFound(res, 'category');
-    }
-    if (rows[0].builtin) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'this category is built in and cannot be deleted' });
-    }
-    const { rows: kids } = await client.query(
+    if (!rows[0]) throw new v.HttpError(404, 'category not found');
+    if (rows[0].builtin) throw new v.HttpError(409, 'this category is built in and cannot be deleted');
+    const { rows: kids } = await db.query(
       'SELECT key FROM categories WHERE user_id = $1 AND parent_key = $2', [uid, key]
     );
     const affected = [key, ...kids.map((k) => k.key)];
-    const { rowCount: moved } = await client.query(
-      "UPDATE expenses SET category = 'other' WHERE user_id = $1 AND category = ANY($2::text[])",
-      [uid, affected]
+    const target = moveTo || await leafOf(db, uid, 'other', affected);
+    if (affected.includes(target)) {
+      throw new v.HttpError(400, 'cannot move transactions into a category being deleted');
+    }
+    const { rows: t } = await db.query(
+      'SELECT 1 FROM categories WHERE user_id = $1 AND key = $2', [uid, target]
     );
-    await client.query('DELETE FROM categories WHERE user_id = $1 AND key = $2', [uid, key]);
+    if (!t[0]) throw new v.HttpError(400, 'unknown moveTo category');
+    if (await hasChildren(db, uid, target, affected)) {
+      throw new v.HttpError(400, 'move transactions to a sub-category, not its parent');
+    }
+    const { rowCount: moved } = await db.query(
+      'UPDATE expenses SET category = $1 WHERE user_id = $2 AND category = ANY($3::text[])',
+      [target, uid, affected]
+    );
+    await db.query('DELETE FROM categories WHERE user_id = $1 AND key = $2', [uid, key]);
+    return { ok: true, reassigned: moved, removedSubcategories: kids.length, movedTo: target };
+  });
+  res.json(out);
+}));
+
+async function withTx(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const out = await fn(client);
     await client.query('COMMIT');
-    res.json({ ok: true, reassigned: moved, removedSubcategories: kids.length });
+    return out;
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     throw e;
   } finally {
     client.release();
   }
-}));
+}
 
-// An expense may only reference a category this user owns. Income rows don't
-// carry a real category (they're excluded from the charts), so they're pinned to
-// the reserved 'income' value instead of being validated against the table.
+// Only two levels: a sub-category's parent must exist and be top-level.
+async function checkParent(db, uid, parentKey) {
+  const { rows } = await db.query(
+    'SELECT parent_key FROM categories WHERE user_id = $1 AND key = $2', [uid, parentKey]
+  );
+  if (!rows[0]) throw new v.HttpError(400, 'unknown parent category');
+  if (rows[0].parent_key) throw new v.HttpError(400, 'a sub-category cannot have sub-categories');
+}
+
+async function nextChildPosition(db, uid, parentKey) {
+  const { rows: [{ next }] } = await db.query(
+    'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM categories WHERE user_id = $1 AND parent_key = $2',
+    [uid, parentKey]
+  );
+  return next;
+}
+
+async function hasChildren(db, uid, key, ignore = []) {
+  const { rows } = await db.query(
+    'SELECT 1 FROM categories WHERE user_id = $1 AND parent_key = $2 AND key <> ALL($3::text[]) LIMIT 1',
+    [uid, key, ignore]
+  );
+  return rows.length > 0;
+}
+
+// The category an expense can sit on for `key`: its first sub-category (not
+// in `ignore`), or `key` itself when it has none.
+async function leafOf(db, uid, key, ignore = []) {
+  const { rows } = await db.query(
+    `SELECT key FROM categories WHERE user_id = $1 AND parent_key = $2 AND key <> ALL($3::text[])
+     ORDER BY position, created_at LIMIT 1`,
+    [uid, key, ignore]
+  );
+  return rows[0] ? rows[0].key : key;
+}
+
+// Strict rule: once a category has sub-categories, its expenses must sit on
+// one of them. So when `parentKey` gains its FIRST sub-category (`childKey`,
+// already in place), expenses filed directly on the parent move into it.
+async function adoptParentExpenses(db, uid, parentKey, childKey) {
+  if (await hasChildren(db, uid, parentKey, [childKey])) return;
+  await db.query(
+    "UPDATE expenses SET category = $1 WHERE user_id = $2 AND category = $3 AND type = 'expense'",
+    [childKey, uid, parentKey]
+  );
+}
+
+// An expense may only reference a category this user owns, and — strict mode —
+// only one without sub-categories. Income rows don't carry a real category
+// (they're excluded from the charts), so they're pinned to the reserved
+// 'income' value instead of being validated against the table.
 async function normaliseExpenseCategory(body, req) {
   const existing = req.params.id ? await getOwned('expenses', req.params.id, req.userId) : null;
   const type = body.type !== undefined ? body.type : (existing || {}).type;
@@ -527,14 +609,19 @@ async function normaliseExpenseCategory(body, req) {
   }
   // The value that will actually end up stored, whether or not this write sets it.
   const cat = body.category !== undefined ? body.category : (existing ? existing.category : undefined);
-  if (cat === undefined) return body; // create with no category — column defaults to 'other'
+  if (cat === undefined) { // create with no category
+    body.category = await leafOf(pool, req.userId, 'other');
+    return body;
+  }
   const { rows } = await query('SELECT 1 FROM categories WHERE user_id = $1 AND key = $2', [req.userId, cat]);
   if (!rows[0]) {
     // Explicitly asking for a category that doesn't exist is a client error...
     if (body.category !== undefined) throw new v.HttpError(400, 'unknown category');
     // ...but an already-stored value going stale (income -> expense, or a
-    // category deleted mid-edit) just falls back to 'other'.
-    body.category = 'other';
+    // category deleted mid-edit) just falls back to Other.
+    body.category = await leafOf(pool, req.userId, 'other');
+  } else if (body.category !== undefined && await hasChildren(pool, req.userId, cat)) {
+    throw new v.HttpError(400, 'choose a sub-category');
   }
   return body;
 }

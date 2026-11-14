@@ -23,12 +23,6 @@ const ago = (days) => {
 const people = [
   {
     name: 'Maya', color: '#E8694A', email: 'maya@example.com', cycleStartDay: 28,
-    // Two sub-categories under the built-in 'food', to exercise the nested
-    // picker and the by-sub-category chart.
-    subcategories: [
-      { key: 'groceries', label: 'Groceries', color: '#E8694A', parent: 'food' },
-      { key: 'eating-out', label: 'Eating Out', color: '#E0A458', parent: 'food' },
-    ],
     tasks: [
       { title: 'Morning stretch', type: 'daily', time: '07:00', completed: true },
       { title: 'Make breakfast', type: 'daily', time: '08:00', completed: true },
@@ -44,12 +38,12 @@ const people = [
       { title: 'Salary', amount: 3500, type: 'income', category: 'other', date: ago(15) },
       { title: 'Freelance work', amount: 800, type: 'income', category: 'other', date: ago(10) },
       { title: 'Groceries', amount: 280, type: 'expense', category: 'groceries', date: ago(3) },
-      { title: 'Uber rides', amount: 85, type: 'expense', category: 'transport', date: ago(5) },
-      { title: 'Netflix', amount: 15, type: 'expense', category: 'entertainment', date: ago(8) },
-      { title: 'Gym membership', amount: 50, type: 'expense', category: 'health', date: ago(8) },
-      { title: 'Electricity', amount: 120, type: 'expense', category: 'bills', date: ago(12) },
-      { title: 'Amazon order', amount: 160, type: 'expense', category: 'shopping', date: ago(2) },
-      { title: 'Coffee shop', amount: 65, type: 'expense', category: 'eating-out', date: ago(1) },
+      { title: 'Uber rides', amount: 85, type: 'expense', category: 'public-transport', date: ago(5) },
+      { title: 'Netflix', amount: 15, type: 'expense', category: 'software', date: ago(8) },
+      { title: 'Gym membership', amount: 50, type: 'expense', category: 'fitness', date: ago(8) },
+      { title: 'Electricity', amount: 120, type: 'expense', category: 'utilities', date: ago(12) },
+      { title: 'Amazon order', amount: 160, type: 'expense', category: 'shopping-misc', date: ago(2) },
+      { title: 'Coffee shop', amount: 65, type: 'expense', category: 'dining-out', date: ago(1) },
     ],
     vault: [
       { label: 'Netflix', username: 'maya@email.com', password: 'Sunshine2024!', notes: 'Family plan' },
@@ -69,9 +63,9 @@ const people = [
     ],
     expenses: [
       { title: 'Allowance', amount: 200, type: 'income', category: 'other', date: ago(1) },
-      { title: 'School lunch', amount: 45, type: 'expense', category: 'food', date: ago(4) },
-      { title: 'Bus pass', amount: 30, type: 'expense', category: 'transport', date: ago(7) },
-      { title: 'Video game', amount: 60, type: 'expense', category: 'entertainment', date: ago(14) },
+      { title: 'School lunch', amount: 45, type: 'expense', category: 'dining-out', date: ago(4) },
+      { title: 'Bus pass', amount: 30, type: 'expense', category: 'public-transport', date: ago(7) },
+      { title: 'Video game', amount: 60, type: 'expense', category: 'shopping-misc', date: ago(14) },
     ],
     vault: [{ label: 'School Portal', username: 'leo.smith', password: 'Lego2024', notes: '' }],
   },
@@ -87,8 +81,8 @@ const people = [
     ],
     expenses: [
       { title: 'Pocket money', amount: 100, type: 'income', category: 'other', date: ago(1) },
-      { title: 'Art supplies', amount: 35, type: 'expense', category: 'shopping', date: ago(5) },
-      { title: 'Snacks', amount: 25, type: 'expense', category: 'food', date: ago(2) },
+      { title: 'Art supplies', amount: 35, type: 'expense', category: 'shopping-misc', date: ago(5) },
+      { title: 'Snacks', amount: 25, type: 'expense', category: 'dining-out', date: ago(2) },
     ],
     vault: [{ label: 'Piano App', username: 'sofia@mail.com', password: 'Piano123', notes: 'Practice log' }],
   },

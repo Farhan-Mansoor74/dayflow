@@ -196,9 +196,8 @@ function hexColor(v, field, { required = false } = {}) {
 }
 
 // `key` is never client-supplied — the route slugifies it from the label.
-// `parentKey` is accepted on create only; the route checks it exists and is
-// itself top-level, then strips it on update so the tree can't be reshaped
-// underneath existing expenses.
+// `parentKey` places a new sub-category, or moves an existing one; the route
+// checks it exists and is itself top-level.
 function categoryBody(b, partial = false) {
   const out = {};
   const label = str(b.label, 'label', { required: !partial, max: 40 });

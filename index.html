@@ -295,6 +295,14 @@
       <p style="font-size:13.5px; font-weight:600; color:#9A8F88; margin:0 0 14px;">{{ catModalSub }}</p>
       <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Name</label>
       <input value="{{ fCatLabel }}" onInput="{{ onCatLabelInput }}" maxlength="40" placeholder="e.g. Travel, Pets, Education" style="width:100%; margin-top:7px; margin-bottom:14px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ accent }}; background:#fff;" />
+      <sc-if value="{{ canMoveCat }}">
+      <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Filed under</label>
+      <div style="display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; margin-bottom:16px;">
+        <sc-for list="{{ catMoveOptions }}" as="p" hint-placeholder-count="8">
+          <button onClick="{{ p.onSelect }}" style="{{ p.style }}">{{ p.label }}</button>
+        </sc-for>
+      </div>
+      </sc-if>
       <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Colour</label>
       <div style="display:flex; flex-wrap:wrap; gap:9px; margin-top:9px; margin-bottom:18px;">
         <sc-for list="{{ catColorOptions }}" as="c" hint-placeholder-count="12">
@@ -591,7 +599,7 @@
       <!-- ---- CATEGORIES VIEW ---- -->
       <sc-if value="{{ isCatView }}" hint-placeholder-val="{{ true }}">
       <div>
-        <p style="font-size:14px; font-weight:600; color:#9A8F88; margin:0 0 18px; line-height:1.5;">Group your spending. Add sub-categories under any category for a finer breakdown — deleting one moves its transactions to Other.</p>
+        <p style="font-size:14px; font-weight:600; color:#9A8F88; margin:0 0 18px; line-height:1.5;">Group your spending. Once a category has sub-categories, every transaction in it goes into one of them. Deleting a category asks where its transactions should go.</p>
         <ul style="list-style:none; margin:0 0 18px; padding:0; display:flex; flex-direction:column; gap:10px;">
           <sc-for list="{{ manageCats }}" as="c" hint-placeholder-count="6">
             <li style="{{ c.rowStyle }}">
@@ -994,6 +1002,13 @@
       </div>
       <h2 style="font-size:20px; font-weight:900; letter-spacing:-.02em; margin:0 0 8px;">{{ confirmTitle }}</h2>
       <p style="font-size:15px; color:#9A8F88; margin:0 0 22px; line-height:1.45;">{{ confirmMessage }}</p>
+      <sc-if value="{{ hasDelMove }}">
+      <div style="display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin:-10px 0 22px; max-height:200px; overflow-y:auto;">
+        <sc-for list="{{ delMoveOptions }}" as="m" hint-placeholder-count="8">
+          <button onClick="{{ m.onSelect }}" style="{{ m.style }}">{{ m.label }}</button>
+        </sc-for>
+      </div>
+      </sc-if>
       <div style="display:flex; gap:10px;">
         <button onClick="{{ onCancelConfirm }}" style="flex:1; padding:13px; border:1.5px solid #E0D8D0; background:#fff; color:#7C7068; border-radius:14px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Cancel</button>
         <button onClick="{{ onConfirmDelete }}" style="flex:1; padding:13px; border:none; background:#D2553A; color:#fff; border-radius:14px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="filter:brightness(1.05);" style-active="transform:scale(.99);">{{ confirmLabel }}</button>
@@ -1059,7 +1074,7 @@ class Component extends DCLogic {
       expenseView: 'list', cycleOffset: 0, filterCats: [], filterOpen: false,
       notifPromptDismissed: false,
       catModalOpen: false, catModalClosing: false, editingCatKey: null, catParentKey: null,
-      fCatLabel: '', fCatColor: '', catBusy: false,
+      fCatLabel: '', fCatColor: '', fCatParent: null, catBusy: false,
       fSetName: '', fSetColor: '', fSetCycleDay: '1', fSetDigestHour: '8', fSetWrapupHour: '20', setBusy: false,
       modalOpen: false, modalClosing: false, editingId: null,
       fTitle: '', fTime: '', fType: 'daily', fDays: [],
@@ -1072,6 +1087,8 @@ class Component extends DCLogic {
       expenseModalOpen: false, expenseModalClosing: false, editingExpenseId: null,
       fETitle: '', fEAmount: '', fEType: 'expense', fECategory: 'other', fEDate: '', fENote: '', voiceListening: false,
       confirmOpen: false, confirmClosing: false, confirmTitle: '', confirmMessage: '', confirmLabel: 'Delete',
+      // Set while confirming a category delete: where its transactions will go.
+      delMoveFor: null, delMoveTo: null,
       enrollOpen: false, enrollBusy: false, enrollStatus: '',
       unlockOpen: false, unlockPurpose: 'vault', unlockMode: 'choose', unlockBusy: false, unlockStatus: '',
       fOtp: '', otpMasked: '', otpRequested: false,
@@ -1153,6 +1170,24 @@ class Component extends DCLogic {
     return cats.find(c=>c.key===key)||cats.find(c=>c.key==='other')||this.FALLBACK_CAT;
   }
   defaultCatKey(){ const t=this.topCategories(); return t.length?t[0].key:'other'; }
+  // Strict mode: a category with sub-categories can't hold expenses itself.
+  isLeaf(key,ignore){ return !this.state.categories.some(c=>c.parent_key===key&&!(ignore||[]).includes(c.key)); }
+  // Categories expenses could be moved to once `ignore` is gone, as "Parent · Sub".
+  leafTargets(ignore){
+    const out=[];
+    this.topCategories().filter(c=>!ignore.includes(c.key)).forEach(c=>{
+      const kids=this.childrenOf(c.key).filter(k=>!ignore.includes(k.key));
+      if(!kids.length)out.push({key:c.key,label:c.label,color:c.color});
+      kids.forEach(k=>out.push({key:k.key,label:c.label+' · '+k.label,color:k.color}));
+    });
+    return out;
+  }
+  // Mirrors the server: a category's FIRST sub-category adopts the expenses
+  // filed directly on that category.
+  adoptLocally(parentKey,childKey){
+    if(!this.isLeaf(parentKey,[childKey]))return this.state.expenses;
+    return this.state.expenses.map(e=>e.type==='expense'&&e.category===parentKey?Object.assign({},e,{category:childKey}):e);
+  }
 
   // ---- API data layer --------------------------------------------------
   SESSION_KEY = 'dayflow_session';
@@ -1416,7 +1451,7 @@ class Component extends DCLogic {
   toast(msg,type){const tok=(this._toastTok=(this._toastTok||0)+1);this.setState({toast:{msg,type:type||'success'}});setTimeout(()=>{if(this._toastTok===tok)this.setState({toast:null});},3000);}
 
   // ---- confirmation dialog ----
-  askConfirm(opts){this._confirmAction=opts.onConfirm;this.setState({confirmOpen:true,confirmClosing:false,confirmTitle:opts.title||'Are you sure?',confirmMessage:opts.message||'',confirmLabel:opts.confirmLabel||'Delete'});}
+  askConfirm(opts){this._confirmAction=opts.onConfirm;this.setState({confirmOpen:true,confirmClosing:false,confirmTitle:opts.title||'Are you sure?',confirmMessage:opts.message||'',confirmLabel:opts.confirmLabel||'Delete',delMoveFor:opts.moveFor||null,delMoveTo:opts.moveTo||null});}
   closeConfirm(){this.setState({confirmClosing:true});setTimeout(()=>this.setState({confirmOpen:false,confirmClosing:false}),200);}
   runConfirm(){const fn=this._confirmAction;this._confirmAction=null;this.closeConfirm();if(fn)fn();}
   confirmDelete(kind,id,label){
@@ -1797,6 +1832,7 @@ class Component extends DCLogic {
     const title=this.state.fETitle.trim();const amount=parseFloat(this.state.fEAmount);
     if(!title||isNaN(amount)||amount<0)return;
     const editing=this.state.editingExpenseId;const fEType=this.state.fEType;
+    if(fEType==='expense'&&!this.isLeaf(this.state.fECategory))return;
     const body={title,amount,type:fEType,category:fEType==='income'?'income':this.state.fECategory,date:this.state.fEDate,note:this.state.fENote};
     this.closeExpenseModal();
     const req=editing?this.api('PATCH','/expenses/'+editing,body):this.api('POST','/expenses',body);
@@ -1817,11 +1853,11 @@ class Component extends DCLogic {
     const used=this.state.categories.map(c=>c.color);
     const free=this.CAT_COLORS.find(c=>!used.includes(c))||this.CAT_COLORS[0];
     const parent=parentKey?this.state.categories.find(c=>c.key===parentKey):null;
-    this.setState({catModalOpen:true,catModalClosing:false,editingCatKey:null,catParentKey:parentKey||null,fCatLabel:'',fCatColor:parent?parent.color:free,catBusy:false});
+    this.setState({catModalOpen:true,catModalClosing:false,editingCatKey:null,catParentKey:parentKey||null,fCatLabel:'',fCatColor:parent?parent.color:free,fCatParent:null,catBusy:false});
   }
   openEditCat(key){
     const c=this.state.categories.find(x=>x.key===key);if(!c)return;
-    this.setState({catModalOpen:true,catModalClosing:false,editingCatKey:key,catParentKey:c.parent_key||null,fCatLabel:c.label,fCatColor:c.color,catBusy:false});
+    this.setState({catModalOpen:true,catModalClosing:false,editingCatKey:key,catParentKey:c.parent_key||null,fCatLabel:c.label,fCatColor:c.color,fCatParent:c.parent_key||null,catBusy:false});
   }
   closeCatModal(){this.setState({catModalClosing:true});setTimeout(()=>this.setState({catModalOpen:false,catModalClosing:false,editingCatKey:null,catParentKey:null}),240);}
   async saveCategory(){
@@ -1830,13 +1866,17 @@ class Component extends DCLogic {
     const key=this.state.editingCatKey;
     const body={label,color:this.state.fCatColor};
     if(!key&&this.state.catParentKey)body.parentKey=this.state.catParentKey;
+    // Moving a sub-category under a different parent.
+    const moving=!!(key&&this.state.catParentKey&&this.state.fCatParent!==this.state.catParentKey);
+    if(moving)body.parentKey=this.state.fCatParent;
     this.setState({catBusy:true});
     try{
       const row=key?await this.api('PATCH','/categories/'+key,body):await this.api('POST','/categories',body);
+      const expenses=body.parentKey?this.adoptLocally(body.parentKey,row.key):this.state.expenses;
       const categories=key?this.state.categories.map(c=>c.key===key?row:c):this.state.categories.concat([row]);
-      this.setState({categories,catBusy:false});
+      this.setState({categories,expenses,catBusy:false});
       this.closeCatModal();
-      this.toast(key?'Category updated':(body.parentKey?'Sub-category added':'Category added'));
+      this.toast(moving?'Sub-category moved':(key?'Category updated':(body.parentKey?'Sub-category added':'Category added')));
     }catch(e){
       this.setState({catBusy:false});
       if(!this.handleAuthError(e))this.toast(e.message||'Could not save category','error');
@@ -1849,20 +1889,27 @@ class Component extends DCLogic {
     const kids=affected.length-1;
     let message='“'+c.label+'” will be removed';
     if(kids)message+=', along with its '+kids+' sub-categor'+(kids===1?'y':'ies');
-    message+=n?('. Its '+n+' transaction'+(n===1?'':'s')+' will move to Other.'):'.';
-    this.askConfirm({title:'Delete category?',message,confirmLabel:'Delete',onConfirm:()=>this.deleteCategory(key)});
+    message+=n?('. Move its '+n+' transaction'+(n===1?'':'s')+' to:'):'.';
+    // Default destination: Other's first sub-category, else the first one left.
+    const targets=this.leafTargets(affected);
+    const def=targets.find(t=>this.rootKey(t.key)==='other')||targets[0];
+    this.askConfirm({title:'Delete category?',message,confirmLabel:'Delete',
+      moveFor:n?key:null,moveTo:n&&def?def.key:null,
+      onConfirm:()=>this.deleteCategory(key,n?this.state.delMoveTo:null)});
   }
-  async deleteCategory(key){
+  async deleteCategory(key,moveTo){
     const affected=[key].concat(this.childrenOf(key).map(k=>k.key));
     try{
-      const r=await this.api('DELETE','/categories/'+key);
+      const r=await this.api('DELETE','/categories/'+key+(moveTo?'?moveTo='+encodeURIComponent(moveTo):''));
+      const to=r&&r.movedTo;
+      const toLabel=to?(this.leafTargets(affected).find(t=>t.key===to)||{label:to}).label:'';
       // Mirror the server's reassignment locally so the charts update at once.
       this.setState({
         categories:this.state.categories.filter(c=>!affected.includes(c.key)),
-        expenses:this.state.expenses.map(e=>affected.includes(e.category)?Object.assign({},e,{category:'other'}):e),
+        expenses:this.state.expenses.map(e=>to&&affected.includes(e.category)?Object.assign({},e,{category:to}):e),
         filterCats:this.state.filterCats.filter(k=>!affected.includes(k)),
       });
-      this.toast(r&&r.reassigned?('Deleted — '+r.reassigned+' moved to Other'):'Category deleted');
+      this.toast(r&&r.reassigned?('Deleted — '+r.reassigned+' moved to '+toLabel):'Category deleted');
     }catch(e){
       if(!this.handleAuthError(e))this.toast(e.message||'Could not delete category','error');
     }
@@ -2254,10 +2301,9 @@ class Component extends DCLogic {
     const catOptions=this.topCategories().map(c=>({label:c.label,onSelect:()=>this.setState({fECategory:c.key}),
       style:'padding:7px 14px;border:none;border-radius:999px;font-size:13px;font-weight:800;cursor:pointer;transition:all .16s;'+(selectedRoot===c.key?'background:'+c.color+';color:#fff;':'background:#ECEAE7;color:#7C7068;')}));
     const kids=this.childrenOf(selectedRoot);
-    const rootCat=this.state.categories.find(c=>c.key===selectedRoot);
-    const subOptions=kids.length?[{key:selectedRoot,label:'General',color:rootCat?rootCat.color:accent}].concat(kids.map(k=>({key:k.key,label:k.label,color:k.color}))).map(o=>({
+    const subOptions=kids.map(k=>({key:k.key,label:k.label,color:k.color})).map(o=>({
       label:o.label,onSelect:()=>this.setState({fECategory:o.key}),
-      style:'padding:7px 14px;border:none;border-radius:999px;font-size:13px;font-weight:800;cursor:pointer;transition:all .16s;'+(s.fECategory===o.key?'background:'+o.color+';color:#fff;':'background:#ECEAE7;color:#7C7068;')})):[];
+      style:'padding:7px 14px;border:none;border-radius:999px;font-size:13px;font-weight:800;cursor:pointer;transition:all .16s;'+(s.fECategory===o.key?'background:'+o.color+';color:#fff;':'background:#ECEAE7;color:#7C7068;')}));
 
     // ---- dashboard cards ----
     const cycleSpend=this.fmtCurrency(totalExp);
@@ -2293,6 +2339,14 @@ class Component extends DCLogic {
     const setColorOptions=this.avatarColors.map(c=>({onSelect:()=>this.setState({fSetColor:c}),
       style:'width:44px;height:44px;border-radius:50%;cursor:pointer;background:'+c+';border:'+(c===s.fSetColor?'3px solid #2E2A27':'3px solid transparent')+';transition:border-color .15s,transform .15s;'}));
     const catParent=s.catParentKey?this.state.categories.find(c=>c.key===s.catParentKey):null;
+    // Editing a sub-category: pick which top-level category it sits under.
+    const catMoveOptions=(s.editingCatKey&&s.catParentKey)?this.topCategories().map(c=>({label:c.label,onSelect:()=>this.setState({fCatParent:c.key}),
+      style:'padding:7px 14px;border:none;border-radius:999px;font-size:13px;font-weight:800;cursor:pointer;transition:all .16s;'+(s.fCatParent===c.key?'background:'+c.color+';color:#fff;':'background:#ECEAE7;color:#7C7068;')})):[];
+    // Deleting a category with transactions: pick where they go.
+    const delAffected=s.delMoveFor?[s.delMoveFor].concat(this.childrenOf(s.delMoveFor).map(k=>k.key)):[];
+    const delMoveOptions=s.delMoveFor?this.leafTargets(delAffected).map(t=>({label:t.label,onSelect:()=>this.setState({delMoveTo:t.key}),
+      style:'padding:6px 12px;border:none;border-radius:999px;font-size:12.5px;font-weight:800;cursor:pointer;transition:all .16s;'+(s.delMoveTo===t.key?'background:'+t.color+';color:#fff;':'background:#ECEAE7;color:#7C7068;')})):[];
+    const eCatOk=s.fEType!=='expense'||this.isLeaf(s.fECategory);
 
     // ---- voice ----
     const vListening=s.voiceListening;
@@ -2415,7 +2469,7 @@ class Component extends DCLogic {
       // toast + confirm
       showToast:!!s.toast,toastMsg:s.toast?s.toast.msg:'',toastIsError:!!(s.toast&&s.toast.type==='error'),toastIsSuccess:!!(s.toast&&s.toast.type!=='error'),
       toastIconStyle:'width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:'+(s.toast&&s.toast.type==='error'?'#D2553A':'#5B9A8B')+';',
-      confirmOpen:s.confirmOpen,confirmTitle:s.confirmTitle,confirmMessage:s.confirmMessage,confirmLabel:s.confirmLabel,
+      confirmOpen:s.confirmOpen,delMoveOptions,hasDelMove:delMoveOptions.length>0,confirmTitle:s.confirmTitle,confirmMessage:s.confirmMessage,confirmLabel:s.confirmLabel,
       confirmBackdropAnim:s.confirmClosing?'fadeOut .18s ease forwards':'fadeIn .2s ease both',
       confirmCardAnim:s.confirmClosing?'fadeOut .18s ease forwards':'taskIn .22s cubic-bezier(.2,.9,.3,1.15) both',
       onConfirmDelete:()=>this.runConfirm(),onCancelConfirm:()=>this.closeConfirm(),
@@ -2436,6 +2490,7 @@ class Component extends DCLogic {
       // category modal
       catModalOpen:s.catModalOpen,catModalTitle:s.editingCatKey?'Edit category':(s.catParentKey?'New sub-category':'New category'),
       catModalSub:s.catParentKey?('Filed under '+(catParent?catParent.label:'')):'Top-level category',
+      catMoveOptions,canMoveCat:catMoveOptions.length>0,
       catSheetAnim:s.catModalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',
       catBackdropAnim:s.catModalClosing?'fadeOut':'fadeIn',
       fCatLabel:s.fCatLabel,catColorOptions,onCatLabelInput:(e)=>this.setState({fCatLabel:e.target.value}),
@@ -2462,7 +2517,7 @@ class Component extends DCLogic {
       onVoiceExpense:()=>(s.voiceListening?this.stopVoice():this.startVoiceExpense()),
       onETitleInput:(e)=>this.setState({fETitle:e.target.value}),onEAmountInput:(e)=>this.setState({fEAmount:e.target.value}),onEDateInput:(e)=>this.setState({fEDate:e.target.value}),onENoteInput:(e)=>this.setState({fENote:e.target.value}),
       onCloseExpenseModal:()=>this.closeExpenseModal(),onSaveExpense:()=>this.saveExpense(),eSaveLabel:s.editingExpenseId?'Save changes':'Log it',
-      eSaveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+(s.fETitle.trim()&&s.fEAmount?'1':'.45')+';pointer-events:'+(s.fETitle.trim()&&s.fEAmount?'auto':'none')+';',
+      eSaveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+(s.fETitle.trim()&&s.fEAmount&&eCatOk?'1':'.45')+';pointer-events:'+(s.fETitle.trim()&&s.fEAmount&&eCatOk?'auto':'none')+';',
       // vault modal
       vaultModalOpen:s.vaultModalOpen,vaultModalTitle:s.editingVaultId?'Edit credential':'New credential',vaultSheetAnim:s.vaultModalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',vaultBackdropAnim:s.vaultModalClosing?'fadeOut':'fadeIn',
       fVaultLabel:s.fVaultLabel,fVaultUser:s.fVaultUser,fVaultPass:s.fVaultPass,fVaultNotes:s.fVaultNotes,showVaultPass:s.showVaultPass,hideVaultPass:!s.showVaultPass,vaultPassInputType:s.showVaultPass?'text':'password',

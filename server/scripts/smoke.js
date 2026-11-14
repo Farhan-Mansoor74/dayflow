@@ -110,7 +110,7 @@ async function makeUser(label) {
     ok(rem.data.qstash_id === undefined, 'reminder response hides qstash_id');
 
     const exp = await req('POST', '/expenses', {
-      title: 'Lunch', amount: 12.5, type: 'expense', category: 'other', date: new Date().toISOString().slice(0, 10),
+      title: 'Lunch', amount: 12.5, type: 'expense', category: 'other-misc', date: new Date().toISOString().slice(0, 10),
     });
     ok(exp.status === 201 && exp.data.amount === '12.50', 'create expense');
 
@@ -157,34 +157,63 @@ async function makeUser(label) {
     ok((await req('PATCH', `/categories/${newCat.data.key}`, { label: 'Nope' }, userB.token)).status === 404,
       "B cannot rename A's category (404)");
 
-    // sub-categories
+    // sub-categories (strict: an expense on a category with sub-categories is refused)
+    const exp2 = await req('POST', '/expenses', {
+      title: 'On the parent', amount: 3, type: 'expense', category: newCat.data.key, date: new Date().toISOString().slice(0, 10),
+    });
+    ok(exp2.status === 201, 'a category without sub-categories takes expenses directly');
     const sub = await req('POST', '/categories', { label: 'Sub One', color: '#654321', parentKey: newCat.data.key });
     ok(sub.status === 201 && sub.data.parent_key === newCat.data.key, 'create sub-category');
+    const expOf = async (id) => (await req('GET', '/expenses')).data.find((e) => e.id === id);
+    ok((await expOf(exp2.data.id)).category === sub.data.key,
+      "a parent's first sub-category adopts the expenses filed on the parent");
+    ok((await req('POST', '/expenses', {
+      title: 'Parent again', amount: 1, type: 'expense', category: newCat.data.key, date: new Date().toISOString().slice(0, 10),
+    })).status === 400, 'expense on a category with sub-categories rejected (400)');
+    ok((await req('POST', '/expenses', { title: 'No cat', amount: 1, type: 'expense', date: new Date().toISOString().slice(0, 10) })).data.category === 'other-misc',
+      "an expense sent without a category lands in Other's sub-category");
     ok((await req('POST', '/categories', { label: 'Deep', color: '#654321', parentKey: sub.data.key })).status === 400,
       'a sub-category cannot have sub-categories (400)');
     ok((await req('POST', '/categories', { label: 'Orphan', color: '#654321', parentKey: 'no-such-parent' })).status === 400,
       'unknown parent rejected (400)');
 
     ok((await req('POST', '/expenses', {
-      title: 'Bad cat', amount: 1, type: 'expense', category: 'no-such-category',
-      date: new Date().toISOString().slice(0, 10),
+      title: 'Bad cat', amount: 1, type: 'expense', category: 'no-such-category', date: new Date().toISOString().slice(0, 10),
     })).status === 400, 'expense with unknown category rejected (400)');
 
-    // Deleting a parent must reassign both its own and its children's expenses.
+    // moving a sub-category to another parent
+    const two = await req('POST', '/categories', { label: 'Smoke Two', color: '#123456' });
+    const exp3 = await req('POST', '/expenses', { title: 'On two', amount: 2, type: 'expense', category: two.data.key, date: new Date().toISOString().slice(0, 10) });
+    const sub2 = await req('POST', '/categories', { label: 'Sub Two', color: '#654321', parentKey: newCat.data.key });
+    ok((await req('PATCH', `/categories/${sub2.data.key}`, { parentKey: two.data.key }, userB.token)).status === 404,
+      "B cannot move A's sub-category (404)");
+    const moved = await req('PATCH', `/categories/${sub2.data.key}`, { parentKey: two.data.key });
+    ok(moved.status === 200 && moved.data.parent_key === two.data.key, 'move a sub-category to another parent');
+    ok((await expOf(exp3.data.id)).category === sub2.data.key,
+      "moving in a first sub-category adopts the new parent's expenses");
+    ok((await req('PATCH', `/categories/${two.data.key}`, { parentKey: newCat.data.key })).status === 400,
+      'a top-level category cannot be moved under another (400)');
+    ok((await req('PATCH', `/categories/${sub.data.key}`, { parentKey: sub2.data.key })).status === 400,
+      'cannot move a sub-category under a sub-category (400)');
+
+    // deleting picks where the expenses go
     await req('PATCH', `/expenses/${exp.data.id}`, { category: sub.data.key });
-    const exp2 = await req('POST', '/expenses', {
-      title: 'On the parent', amount: 3, type: 'expense', category: newCat.data.key,
-      date: new Date().toISOString().slice(0, 10),
-    });
-    const delCat = await req('DELETE', `/categories/${newCat.data.key}`);
-    ok(delCat.status === 200 && delCat.data.reassigned === 2 && delCat.data.removedSubcategories === 1,
-      'deleting a parent reassigns its own and its children\'s expenses');
-    const after = await req('GET', '/expenses');
-    ok(after.data.every((e) => e.category === 'other'), "reassigned expenses land in 'other'");
+    const del = (k, to) => req('DELETE', `/categories/${k}${to ? '?moveTo=' + to : ''}`);
+    ok((await del(newCat.data.key, two.data.key)).status === 400, 'moveTo a category with sub-categories rejected (400)');
+    ok((await del(newCat.data.key, sub.data.key)).status === 400, 'moveTo a category being deleted rejected (400)');
+    ok((await del(newCat.data.key, 'no-such-category')).status === 400, 'moveTo an unknown category rejected (400)');
+    const delCat = await del(newCat.data.key, sub2.data.key);
+    ok(delCat.status === 200 && delCat.data.reassigned === 2 && delCat.data.removedSubcategories === 1
+      && delCat.data.movedTo === sub2.data.key,
+      "deleting a parent moves its own and its children's expenses to moveTo");
+    ok((await expOf(exp.data.id)).category === sub2.data.key && (await expOf(exp2.data.id)).category === sub2.data.key,
+      'reassigned expenses land in the chosen category');
     ok(!(await req('GET', '/categories')).data.some((c) => c.key === sub.data.key),
       'the sub-category rows were removed too');
+    const delTwo = await del(two.data.key);
+    ok(delTwo.status === 200 && delTwo.data.movedTo === 'other-misc' && (await expOf(exp3.data.id)).category === 'other-misc',
+      "without moveTo, expenses go to Other's sub-category");
     ok((await req('DELETE', '/categories/other')).status === 409, 'builtin category cannot be deleted (409)');
-    ok(exp2.status === 201, 'created the parent-tagged expense');
 
     // income is pinned to the reserved category regardless of what was sent
     const inc = await req('POST', '/expenses', {
