@@ -163,7 +163,7 @@ function reminderBody(b, partial = false) {
   if (dt !== undefined) out.datetime = dt;
   const method = enumVal(b.method, 'method', ['notification', 'email'], { required: !partial });
   if (method !== undefined) out.method = method;
-  if (b.email !== undefined) out.email = str(b.email, 'email', { max: 254 }) || '';
+  // No `email` field: email reminders always go to the account's own address.
   const done = bool(b.done, 'done');
   if (done !== undefined) out.done = done;
   if (partial && Object.keys(out).length === 0) bad('no updatable fields provided');
@@ -230,8 +230,31 @@ function vaultBody(b, partial = false) {
   return { columns: out, password };
 }
 
+// The server POSTs to a subscription's endpoint whenever a reminder fires, so
+// only accept the browsers' real push services, never an arbitrary URL.
+const PUSH_HOSTS = [
+  /^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, // Chrome, Edge (Chromium), Android
+  /^updates\.push\.services\.mozilla\.com$/,               // Firefox
+  /^web\.push\.apple\.com$/, /\.push\.apple\.com$/,        // Safari
+  /\.notify\.windows\.com$/,                               // legacy Edge / Windows
+];
+function pushSubscription(sub) {
+  if (!sub || typeof sub !== 'object' || !sub.keys || typeof sub.keys !== 'object') bad('invalid push subscription');
+  const endpoint = str(sub.endpoint, 'endpoint', { required: true, max: 1000 });
+  let url;
+  try { url = new URL(endpoint); } catch { bad('invalid push endpoint'); }
+  if (url.protocol !== 'https:' || url.port || !PUSH_HOSTS.some((re) => re.test(url.hostname))) {
+    bad('push endpoint must be a browser push service');
+  }
+  const p256dh = str(sub.keys.p256dh, 'p256dh', { required: true, max: 200 });
+  const auth = str(sub.keys.auth, 'auth', { required: true, max: 100 });
+  if (!/^[A-Za-z0-9_-]+=*$/.test(p256dh) || !/^[A-Za-z0-9_-]+=*$/.test(auth)) bad('invalid push keys');
+  return { endpoint, keys: { p256dh, auth } };
+}
+
 module.exports = {
   HttpError,
+  pushSubscription,
   userBody,
   taskBody,
   reminderBody,

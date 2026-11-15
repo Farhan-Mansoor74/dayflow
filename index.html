@@ -911,6 +911,7 @@
 
           <div style="display:flex; gap:12px;">
             <button onClick="{{ onSignOut }}" style="flex:1; border:none; background:#2E2A27; color:#fff; padding:15px 18px; border-radius:18px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="background:#3D3834;">Sign out</button>
+            <button onClick="{{ onSignOutEverywhere }}" style="flex:1; border:none; background:#fff; color:#5A5250; padding:15px 18px; border-radius:18px; font-size:15px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Sign out everywhere</button>
             <button onClick="{{ onDeleteAccount }}" style="flex:1; border:none; background:#fff; color:#B6A99F; padding:15px 18px; border-radius:18px; font-size:14px; font-weight:800; cursor:pointer;" style-hover="color:#D2553A;">Delete account and all data</button>
           </div>
         </div>
@@ -1011,6 +1012,7 @@
       </div>
 
       <button onClick="{{ onSignOut }}" style="width:100%; margin-bottom:12px; border:1px solid #E0D8D0; background:#fff; color:#5A5250; padding:16px 18px; border-radius:20px; font-size:16px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Sign out</button>
+      <button onClick="{{ onSignOutEverywhere }}" style="width:100%; margin-bottom:12px; border:1px solid #E0D8D0; background:#fff; color:#5A5250; padding:16px 18px; border-radius:20px; font-size:16px; font-weight:800; cursor:pointer;" style-hover="background:#F5F0EC;">Sign out everywhere</button>
       <button onClick="{{ onDeleteAccount }}" style="width:100%; border:none; background:none; color:#B6A99F; padding:14px; font-size:14px; font-weight:800; cursor:pointer;" style-hover="color:#D2553A;">Delete my account and all data</button>
       <sc-if value="{{ isSettingsDirty }}">
         <div style="height:calc(80px + env(safe-area-inset-bottom));"></div>
@@ -1551,8 +1553,7 @@
       </div>
       <sc-if value="{{ isEmailMethod }}">
       <div style="animation:taskIn .2s ease both; margin-bottom:12px;">
-        <label style="font-size:13px; font-weight:800; color:#7C7068; text-transform:uppercase; letter-spacing:.04em;">Email address</label>
-        <input value="{{ fREmail }}" onInput="{{ onREmailInput }}" placeholder="your@email.com" type="email" style="width:100%; margin-top:7px; padding:11px 15px; font-size:16px; font-weight:600; border:1.5px solid #ECE0D8; border-radius:14px; background:#FBF6F2; color:#2E2A27;" style-focus="border-color:{{ activeColor }}; background:#fff;" />
+        <div style="font-size:14px; font-weight:700; color:#7C7068; background:#FBF6F2; border:1.5px solid #ECE0D8; border-radius:14px; padding:11px 15px;">Sent to your account email, {{ userEmail }}</div>
       </div>
       </sc-if>
       <div style="display:flex; gap:12px; margin-top:4px;">
@@ -1835,7 +1836,7 @@ class Component extends DCLogic {
       vaultRevealedIds: [], vaultModalOpen: false, vaultModalClosing: false, editingVaultId: null,
       fVaultLabel: '', fVaultUser: '', fVaultPass: '', fVaultNotes: '', showVaultPass: false,
       reminderModalOpen: false, reminderModalClosing: false, editingReminderId: null,
-      fRTitle: '', fRDatetime: '', fRMethod: 'notification', fREmail: '',
+      fRTitle: '', fRDatetime: '', fRMethod: 'notification',
       expenseModalOpen: false, expenseModalClosing: false, editingExpenseId: null,
       fETitle: '', fEAmount: '', fEType: 'expense', fECategory: 'other', fEDate: '', fENote: '', voiceListening: false,
       confirmOpen: false, confirmClosing: false, confirmTitle: '', confirmMessage: '', confirmLabel: 'Delete',
@@ -1982,13 +1983,15 @@ class Component extends DCLogic {
   // Treat a token that expires in the next few seconds as already gone, so we
   // prompt for a fresh unlock instead of opening the camera and then 403-ing.
   hasStepUp(){return !!this.stepUpToken&&this.stepUpExpiry>Date.now()+5000;}
+  // The session itself is an HttpOnly cookie that scripts can't read. This is
+  // only a "signed in on this device" marker: it lets boot skip a pointless
+  // request when signed out, and lets offline mode show the cached day.
   loadSession(){
-    try{const s=JSON.parse(localStorage.getItem(this.SESSION_KEY)||'null');
-      if(s&&s.token&&(!s.exp||s.exp>Date.now()))return s;}catch(e){}
+    try{return JSON.parse(localStorage.getItem(this.SESSION_KEY)||'null');}catch(e){}
     return null;
   }
-  saveSession(token,expiresAt){this.authToken=token;try{localStorage.setItem(this.SESSION_KEY,JSON.stringify({token,exp:expiresAt||0}));}catch(e){}}
-  clearSession(){this.authToken=null;this.setStepUp(null,0);try{localStorage.removeItem(this.SESSION_KEY);}catch(e){}this.clearSnapshot();}
+  saveSession(){try{localStorage.setItem(this.SESSION_KEY,JSON.stringify({signedIn:true}));}catch(e){}}
+  clearSession(){this.setStepUp(null,0);try{localStorage.removeItem(this.SESSION_KEY);}catch(e){}this.clearSnapshot();}
   // ---- offline snapshot -------------------------------------------------
   // The last successful /bootstrap, kept so a device that has already signed in
   // can still SHOW the day with no network. Read-only: nothing is queued, and
@@ -2034,16 +2037,17 @@ class Component extends DCLogic {
       err.offline=true;
       return Promise.reject(err);
     }
-    const headers={};
+    // The session cookie rides along (credentials:'include'); X-Dayflow is the
+    // server's CSRF check: other sites can't send it.
+    const headers={'X-Dayflow':'1'};
     if(body)headers['Content-Type']='application/json';
-    if(this.authToken)headers['Authorization']='Bearer '+this.authToken;
     if(stepUp&&this.stepUpToken)headers['X-StepUp-Token']=this.stepUpToken;
     // No fetch call in this app had a bound before: a stalled server or a
     // paused/unreachable database left the caller's promise hanging forever,
     // which is what left the face-unlock dialog stuck on "Scanning…".
     const controller=new AbortController();
     const timer=setTimeout(()=>controller.abort(),timeoutMs||20000);
-    return fetch(this.API+path,{method,headers,body:body?JSON.stringify(body):undefined,signal:controller.signal})
+    return fetch(this.API+path,{method,headers,credentials:'include',body:body?JSON.stringify(body):undefined,signal:controller.signal})
       .then(async res=>{
         if(res.status===204)return null;
         let data=null;try{data=await res.json();}catch(e){}
@@ -2112,7 +2116,7 @@ class Component extends DCLogic {
     if(!resp||!resp.credential)return;
     this.setState({signingIn:true,authError:''});
     this.api('POST','/auth/google',{credential:resp.credential}).then(r=>{
-      this.saveSession(r.token,r.expiresAt);
+      this.saveSession();
       this.setState({signingIn:false,loading:true,screen:''});
       this.boot();
     }).catch(e=>{
@@ -2129,15 +2133,31 @@ class Component extends DCLogic {
       const sub=reg&&await reg.pushManager.getSubscription();
       if(sub){await this.api('POST','/push/unsubscribe',{endpoint:sub.endpoint}).catch(()=>{});await sub.unsubscribe().catch(()=>{});}
     }catch(e){/* best effort — signing out must never be blocked by this */}
+    // End the session on the server, so the cookie is dead everywhere it exists.
+    if(!this.state.offline)await this.api('POST','/auth/logout').catch(()=>{});
+    this.signedOut();
+  }
+  signedOut(){
     this.clearSession();
     this.setState({user:null,tasks:[],reminders:[],expenses:[],categories:[],vault:[],vaultLoaded:false,screen:'welcome',loading:false,authError:''});
   }
+  signOutEverywhere(){
+    this.askConfirm({
+      title:'Sign out everywhere?',
+      message:'Every device signed in to your account, this one included, will need to sign in again.',
+      confirmLabel:'Sign out everywhere',
+      onConfirm:()=>{this.api('POST','/auth/logout-all').then(()=>this.signedOut()).catch(e=>this.toast(e.message||'Could not sign out','error'));},
+    });
+  }
+  // Deleting needs the same unlock as the vault (face or emailed code), so a
+  // stolen session alone can't wipe the account.
   deleteAccount(){
+    if(!this.hasStepUp()){this.openUnlock('delete');return;}
     this.askConfirm({
       title:'Delete your account?',
       message:'Every task, reminder, transaction and vault entry will be permanently deleted. This cannot be undone.',
       confirmLabel:'Delete everything',
-      onConfirm:()=>{this.api('DELETE','/me').then(()=>{this.toast('Account deleted');this.signOut();}).catch(e=>this.toast(e.message||'Could not delete account','error'));},
+      onConfirm:()=>{this.api('DELETE','/me',null,true).then(()=>{this.toast('Account deleted');this.signedOut();}).catch(e=>this.toast(e.message||'Could not delete account','error'));},
     });
   }
 
@@ -2164,7 +2184,6 @@ class Component extends DCLogic {
   async boot(){
     const sess=this.loadSession();
     if(!sess){this.setState({loading:false,screen:'welcome',user:null});return;}
-    this.authToken=sess.token;
     try{
       const b=await this.api('GET','/bootstrap').catch(e=>{if(e.status===404)e.accountGone=true;throw e;});
       this.saveSnapshot(b);
@@ -2392,17 +2411,17 @@ class Component extends DCLogic {
   // ---- reminders --------------------------------------------------------
   openAddReminder(){
     const d=new Date();d.setDate(d.getDate()+1);d.setHours(9,0,0,0);
-    this.setState({reminderModalOpen:true,reminderModalClosing:false,editingReminderId:null,fRTitle:'',fRDatetime:this.toLocalInput(d),fRMethod:'notification',fREmail:''});
+    this.setState({reminderModalOpen:true,reminderModalClosing:false,editingReminderId:null,fRTitle:'',fRDatetime:this.toLocalInput(d),fRMethod:'notification'});
   }
   openEditReminder(id){
     const r=this.state.reminders.find(x=>x.id===id);if(!r)return;
-    this.setState({reminderModalOpen:true,reminderModalClosing:false,editingReminderId:id,fRTitle:r.title,fRDatetime:this.toLocalInput(r.datetime),fRMethod:r.method,fREmail:r.email||''});
+    this.setState({reminderModalOpen:true,reminderModalClosing:false,editingReminderId:id,fRTitle:r.title,fRDatetime:this.toLocalInput(r.datetime),fRMethod:r.method});
   }
   closeReminderModal(){this.setState({reminderModalClosing:true});setTimeout(()=>this.setState({reminderModalOpen:false,reminderModalClosing:false,editingReminderId:null}),240);}
   saveReminder(){
     const title=this.state.fRTitle.trim();if(!title||!this.state.fRDatetime)return;
     const editing=this.state.editingReminderId;
-    const body={title,datetime:new Date(this.state.fRDatetime).toISOString(),method:this.state.fRMethod,email:this.state.fREmail};
+    const body={title,datetime:new Date(this.state.fRDatetime).toISOString(),method:this.state.fRMethod};
     this.closeReminderModal();
     const req=editing?this.api('PATCH','/reminders/'+editing,body):this.api('POST','/reminders',body);
     req.then(r=>{
@@ -2560,7 +2579,7 @@ class Component extends DCLogic {
     const purpose=this.state.unlockPurpose;
     this.stopCamera();
     this.setState({unlockOpen:false,otpRequested:false,fOtp:''});
-    if(purpose==='enroll')this.openEnroll();else this.loadVault();
+    if(purpose==='enroll')this.openEnroll();else if(purpose==='delete')this.deleteAccount();else this.loadVault();
   }
   loadVault(){
     this.api('GET','/vault',null,true).then(vault=>{
@@ -3186,7 +3205,7 @@ class Component extends DCLogic {
       else if(diff<0){status='Overdue';statusColor='#C2410C';statusBg='#FBE3D8';}
       else if(diff<3600000){status='Due soon';statusColor='#B45309';statusBg='#FEF3C7';}
       else{status='Upcoming';statusColor='#4B5563';statusBg='#F3F4F6';}
-      return{id:r.id,title:r.title,dueLabel:this.fmtDate(r.datetime),methodLabel:r.method==='notification'?'In-app notification':'Email'+(r.email?' ('+r.email+')':''),isNotification:r.method==='notification',isEmail:r.method==='email',
+      return{id:r.id,title:r.title,dueLabel:this.fmtDate(r.datetime),methodLabel:r.method==='notification'?'In-app notification':'Email',isNotification:r.method==='notification',isEmail:r.method==='email',
         status,statusStyle:'font-size:12px;font-weight:800;padding:2px 10px;border-radius:999px;color:'+statusColor+';background:'+statusBg+';',
         titleStyle:'font-size:16px;font-weight:800;color:'+(r.done?'#BCAFA5':'#2E2A27')+';text-decoration:'+(r.done?'line-through':'none')+';',
         outerStyle:'animation:taskIn .28s cubic-bezier(.2,.9,.3,1.1) '+(idx*0.05)+'s both;',
@@ -3401,7 +3420,7 @@ class Component extends DCLogic {
       setSaveStyle:'padding:13px 22px;border:none;border-radius:16px;font-size:15px;font-weight:800;cursor:pointer;color:#fff;flex:none;background:'+accent+';opacity:'+(s.setBusy?'.45':'1')+';pointer-events:'+(s.setBusy?'none':'auto')+';',
       onFaceSetup:()=>this.faceSetup(),faceStatusLabel:u.faceEnrolled?'Enrolled — tap to re-capture or remove':'Not set up — you can still use an emailed code',
       faceIconStyle:'width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex:none;'+(u.faceEnrolled?'background:'+accent+';color:#fff;':'background:#F0EAE4;color:#7C7068;'),
-      onSignOut:()=>this.signOut(),onDeleteAccount:()=>this.deleteAccount(),
+      onSignOut:()=>this.signOut(),onSignOutEverywhere:()=>this.signOutEverywhere(),onDeleteAccount:()=>this.deleteAccount(),
       notifGranted,notifBlocked,notifNeedsPermission:notifPerm==='default',notifToggles,
       notifStatusLabel:notifGranted?'On for this device'
         :(notifBlocked?'Blocked by your browser'
@@ -3470,8 +3489,10 @@ class Component extends DCLogic {
       enrollCaptureLabel:s.enrollBusy?'Scanning…':(u.faceEnrolled?'Re-capture face':'Capture face'),
       // step-up unlock
       unlockOpen:s.unlockOpen,unlockColor:accent,
-      unlockTitle:s.unlockPurpose==='enroll'?'Confirm it’s you':'Unlock your vault',
-      unlockSubtitle:s.unlockPurpose==='enroll'?'Changing Face Unlock also changes how your vault opens, so verify first.':'Being signed in isn’t enough — verify to reveal your stored passwords.',
+      unlockTitle:s.unlockPurpose==='vault'?'Unlock your vault':'Confirm it’s you',
+      unlockSubtitle:s.unlockPurpose==='enroll'?'Changing Face Unlock also changes how your vault opens, so verify first.'
+        :s.unlockPurpose==='delete'?'Deleting your account can’t be undone, so verify first.'
+        :'Being signed in isn’t enough — verify to reveal your stored passwords.',
       unlockCanFace:!!u.faceEnrolled&&s.unlockPurpose!=='enroll',unlockCanEmail:true,unlockNoFace:!u.faceEnrolled,
       unlockIsChoose:s.unlockMode==='choose',unlockIsFace:s.unlockMode==='face',unlockIsOtp:s.unlockMode==='otp',unlockBusy:s.unlockBusy,unlockStatus:s.unlockStatus,
       setUnlockVideo:this.setUnlockVideo,otpRequested:s.otpRequested,otpNotRequested:!s.otpRequested,otpMasked:s.otpMasked,fOtp:s.fOtp,
@@ -3495,8 +3516,8 @@ class Component extends DCLogic {
       saveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+(s.fTitle.trim()?'1':'.45')+';pointer-events:'+(s.fTitle.trim()?'auto':'none')+';',
       // reminder modal
       reminderModalOpen:s.reminderModalOpen,reminderModalTitle:s.editingReminderId?'Edit reminder':'New reminder',rSheetAnim:s.reminderModalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',rBackdropAnim:s.reminderModalClosing?'fadeOut':'fadeIn',
-      fRTitle:s.fRTitle,fRDatetime:s.fRDatetime,isEmailMethod:s.fRMethod==='email',fREmail:s.fREmail,methodOptions,
-      onRTitleInput:(e)=>this.setState({fRTitle:e.target.value}),onRDatetimeInput:(e)=>this.setState({fRDatetime:e.target.value}),onREmailInput:(e)=>this.setState({fREmail:e.target.value}),onCloseReminderModal:()=>this.closeReminderModal(),onSaveReminder:()=>this.saveReminder(),rSaveLabel:s.editingReminderId?'Save changes':'Set reminder',
+      fRTitle:s.fRTitle,fRDatetime:s.fRDatetime,isEmailMethod:s.fRMethod==='email',methodOptions,
+      onRTitleInput:(e)=>this.setState({fRTitle:e.target.value}),onRDatetimeInput:(e)=>this.setState({fRDatetime:e.target.value}),onCloseReminderModal:()=>this.closeReminderModal(),onSaveReminder:()=>this.saveReminder(),rSaveLabel:s.editingReminderId?'Save changes':'Set reminder',
       rSaveStyle:'flex:1;padding:14px;border:none;border-radius:16px;font-size:16px;font-weight:800;cursor:pointer;color:#fff;background:'+accent+';opacity:'+(s.fRTitle.trim()&&s.fRDatetime?'1':'.45')+';pointer-events:'+(s.fRTitle.trim()&&s.fRDatetime?'auto':'none')+';',
       // expense modal
       expenseModalOpen:s.expenseModalOpen,expenseModalTitle:s.editingExpenseId?'Edit transaction':'Log transaction',eSheetAnim:s.expenseModalClosing?'sheetOut .24s ease forwards':'sheetIn .32s cubic-bezier(.2,.9,.3,1.15) both',eBackdropAnim:s.expenseModalClosing?'fadeOut':'fadeIn',

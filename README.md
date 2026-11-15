@@ -84,8 +84,11 @@ Secrets live in `server/.env` (never committed). Key ones:
   reports `auth: misconfigured`. There is no client *secret*: the browser posts
   the Google ID token and the server verifies its signature. On Vercel, add the
   same value under Settings → Environment Variables.
-- `VAULT_KEY` — 32-byte key that encrypts vault passwords at rest (`npm run keygen`).
-  Also doubles as the session-signing secret unless `AUTH_SECRET` is set.
+- `VAULT_KEY`, `AUTH_SECRET`, `OTP_SECRET` — **required**, all different
+  (`npm run keygen` prints all three). The API refuses to start without them.
+- `ALLOWED_EMAILS` — addresses allowed to create a new account (existing
+  accounts can always sign in).
+- `PG_CA` — the database's CA certificate, to verify the connection.
 - `CRON_SECRET`, `VAPID_*`, `SMTP_*` — for reminders (cron, Web Push, email).
   `SMTP_*` is not optional in practice: the emailed code is the fallback way into
   the vault when no face is enrolled.

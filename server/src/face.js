@@ -9,17 +9,17 @@ function validDescriptor(arr) {
 }
 
 // Encrypt a descriptor for storage (rounded to 6 dp to keep it compact).
-function encodeDescriptor(arr) {
+function encodeDescriptor(arr, userId) {
   if (!validDescriptor(arr)) {
     const e = new Error('descriptor must be an array of 128 finite numbers');
     e.status = 400; e.expose = true; throw e;
   }
-  return encrypt(JSON.stringify(arr.map((n) => Math.round(n * 1e6) / 1e6)));
+  return encrypt(JSON.stringify(arr.map((n) => Math.round(n * 1e6) / 1e6)), userId);
 }
 
-function decodeDescriptor(blob) {
+function decodeDescriptor(blob, userId) {
   try {
-    const a = JSON.parse(decrypt(blob));
+    const a = JSON.parse(decrypt(blob, userId));
     return validDescriptor(a) ? a : null;
   } catch {
     return null;

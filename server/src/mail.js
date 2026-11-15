@@ -33,11 +33,14 @@ async function getTransport() {
       })
     );
     console.log('[mail] using SMTP host', process.env.SMTP_HOST);
+  } else if (process.env.NODE_ENV === 'production') {
+    // Never fall back to the test service in production: its preview pages would
+    // expose unlock codes to anyone holding the link.
+    throw new Error('SMTP is not configured (set SMTP_HOST)');
   } else {
     usingEthereal = true;
     transportP = nodemailer.createTestAccount().then((acct) => {
       console.log('[mail] no SMTP configured — using Ethereal TEST mode (emails are not actually delivered).');
-      console.log('[mail] test inbox login:', acct.user, '/', acct.pass);
       return nodemailer.createTransport({
         host: 'smtp.ethereal.email',
         port: 587,

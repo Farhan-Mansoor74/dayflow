@@ -3,13 +3,15 @@
 //   Terminal 2:  npm run smoke
 //
 // Sign-in itself can't be exercised over HTTP (it needs a real Google ID token),
-// so the test creates two throwaway users straight in the database and mints
-// their session tokens with the same code path POST /auth/google uses. That also
-// gives us a second identity to prove cross-account access is refused.
+// so the test creates two throwaway users straight in the database and inserts
+// session rows for them the way POST /auth/google does, sending the token as
+// the session cookie. That also gives us a second identity to prove
+// cross-account access is refused.
 require('dotenv').config();
 
 const { pool, query } = require('../src/db');
-const { issueToken } = require('../src/auth');
+const crypto = require('crypto');
+const { hashCode } = require('../src/otp');
 const { seedCategories } = require('../src/defaults');
 
 const BASE = `http://localhost:${Number(process.env.PORT) || 3088}/api`;
@@ -22,10 +24,10 @@ function ok(cond, label) {
   else { fail++; console.log('  FAIL', label); }
 }
 
-async function req(method, path, body, asToken = token) {
-  const headers = {};
+async function req(method, path, body, asToken = token, extra = {}) {
+  const headers = { 'X-Dayflow': '1', ...extra };
   if (body) headers['Content-Type'] = 'application/json';
-  if (asToken) headers.Authorization = `Bearer ${asToken}`;
+  if (asToken) headers.Cookie = `dayflow_sid=${asToken}`;
   const res = await fetch(BASE + path, {
     method,
     headers: Object.keys(headers).length ? headers : undefined,
@@ -46,7 +48,14 @@ async function makeUser(label) {
   );
   const client = await pool.connect();
   try { await seedCategories(client, rows[0].id); } finally { client.release(); }
-  return { id: rows[0].id, token: issueToken(rows[0].id).token };
+  return { id: rows[0].id, token: await newSession(rows[0].id) };
+}
+
+async function newSession(userId) {
+  const t = crypto.randomBytes(32).toString('base64url');
+  await query("INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 hour')",
+    [userId, crypto.createHash('sha256').update(t).digest('hex')]);
+  return t;
 }
 
 (async () => {
@@ -129,9 +138,65 @@ async function makeUser(label) {
       ok((await req('POST', '/me/face/match', { descriptor })).status === 400,
         'face match with nothing enrolled -> 400, not a token');
       const { encrypt, decrypt } = require('../src/crypto');
-      ok(decrypt(encrypt('s3cr3t!')) === 's3cr3t!', 'vault encrypt/decrypt round-trips');
+      ok(decrypt(encrypt('s3cr3t!', 'u1'), 'u1') === 's3cr3t!', 'vault encrypt/decrypt round-trips');
     } else {
       console.log('  skip  vault tests (VAULT_KEY not set)');
+    }
+
+    // ---- security hardening -------------------------------------------------
+    ok((await req('POST', '/tasks', { title: 'x', type: 'daily' }, token, { 'X-Dayflow': '' })).status === 403,
+      'write without the X-Dayflow header refused (403)');
+    ok((await req('GET', '/cron/run?key=' + encodeURIComponent(process.env.CRON_SECRET || 'x'), null, null)).status === 401,
+      'cron secret in the query string is not accepted');
+    ok((await req('POST', '/push/subscribe', { subscription: { endpoint: 'http://169.254.169.254/x', keys: { p256dh: 'abc', auth: 'abc' } } })).status
+      === (health.data.push === 'enabled' ? 400 : 503), 'push endpoint outside the push services rejected');
+    const remE = await req('POST', '/reminders', {
+      title: 'Mail me', datetime: new Date(Date.now() + 7200e3).toISOString(), method: 'email', email: 'someone@else.test',
+    });
+    ok(remE.status === 201 && remE.data.email === '', 'email reminders ignore a supplied address');
+    await req('DELETE', `/reminders/${remE.data.id}`);
+
+    if (health.data.vault === 'enabled') {
+      // Emailed code: parallel wrong guesses can't exceed the per-code attempt cap.
+      const setCode = (c) => query("UPDATE users SET otp_hash = $1, otp_expires_at = now() + interval '5 minutes', otp_attempts = 0 WHERE id = $2", [hashCode(c), userA.id]);
+      await setCode('123456');
+      const guesses = await Promise.all(Array.from({ length: 10 }, (_, i) => req('POST', '/me/otp/verify', { code: String(100000 + i) })));
+      ok(guesses.filter((g) => g.status === 401).length <= 5, 'parallel OTP guesses capped at 5 checks');
+      ok((await req('POST', '/me/otp/verify', { code: '123456' })).status !== 200, 'right code refused once attempts are spent');
+      await setCode('654321');
+      const good = await req('POST', '/me/otp/verify', { code: '654321' });
+      ok(good.status === 200 && !!good.data.stepUpToken, 'right code unlocks');
+      ok((await req('POST', '/me/otp/verify', { code: '654321' })).status === 400, 'a code works only once');
+      const su = { 'X-StepUp-Token': good.data.stepUpToken };
+
+      // Vault: every field stored encrypted with the owner's key.
+      const item = await req('POST', '/vault', { label: 'Bank', username: 'me@bank', password: 'pw-123', notes: 'pin 4821' }, token, su);
+      ok(item.status === 201 && item.data.label === 'Bank' && item.data.notes === 'pin 4821', 'vault item round-trips');
+      const raw = (await query('SELECT label, username, notes, password_enc FROM vault_items WHERE id = $1', [item.data.id])).rows[0];
+      ok(['label', 'username', 'notes', 'password_enc'].every((c) => raw[c].startsWith('v2:')), 'vault label/username/notes/password stored as v2 ciphertext');
+      ok((await req('GET', '/vault', null, userB.token, su)).status === 403, "A's unlock token doesn't work for B");
+
+      // Face: no distance oracle, and few attempts.
+      const descriptor = Array.from({ length: 128 }, () => 0.1);
+      ok((await req('POST', '/me/face', { descriptor }, token, su)).status === 200, 'enroll face with step-up');
+      const miss = await req('POST', '/me/face/match', { descriptor: descriptor.map((n) => n + 0.2) });
+      ok(miss.status === 200 && miss.data.matched === false && miss.data.distance === undefined, 'face match reveals no distance');
+      for (let i = 0; i < 4; i++) await req('POST', '/me/face/match', { descriptor: descriptor.map((n) => n + 0.2) });
+      ok((await req('POST', '/me/face/match', { descriptor })).status === 429, 'sixth face attempt within 15 min -> 429');
+
+      // Account deletion needs the step-up too.
+      ok((await req('DELETE', '/me', null, userB.token)).status === 403, 'delete account refused without step-up (403)');
+
+      // Sign-out ends the session (and its unlock token) server-side.
+      const second = await newSession(userA.id);
+      ok((await req('POST', '/auth/logout', null, second)).status === 204, 'logout');
+      ok((await req('GET', '/me', null, second)).status === 401, 'logged-out session is dead');
+      const third = await newSession(userA.id);
+      ok((await req('GET', '/vault', null, third, su)).status === 403, 'unlock token is bound to its session');
+      ok((await req('POST', '/auth/logout-all', null, third)).status === 204, 'logout everywhere');
+      ok((await req('GET', '/me', null, token)).status === 401, 'logout everywhere kills the other sessions too');
+      token = await newSession(userA.id);
+      userA.token = token;
     }
 
     // ---- bootstrap ----------------------------------------------------------

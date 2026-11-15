@@ -4,8 +4,8 @@
 // Bump this on every release that changes index.html / support.js. The fetch
 // handler below is cache-first, and `install` only re-runs when THIS file
 // changes — so without a bump, an already-installed app keeps serving the old
-// shell from cache forever. v4 = read-only offline mode.
-const CACHE = 'dayflow-shell-v4';
+// shell from cache forever. v4 = read-only offline mode, v5 = cookie sessions.
+const CACHE = 'dayflow-shell-v5';
 const SHELL = [
   './',
   './index.html',

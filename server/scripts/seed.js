@@ -7,6 +7,17 @@ const { pool } = require('../src/db');
 const { encrypt, vaultEnabled } = require('../src/crypto');
 const { seedCategories } = require('../src/defaults');
 
+// This wipes every table. Refuse anything but a database on this machine, so it
+// can never be pointed at the real (hosted) one by accident.
+{
+  let host = process.env.PGHOST || 'localhost';
+  try { if (process.env.DATABASE_URL) host = new URL(process.env.DATABASE_URL).hostname; } catch { host = '?'; }
+  if (!['localhost', '127.0.0.1', '::1'].includes(host)) {
+    console.error('[seed] refusing to run: the database host is ' + host + ', not a local database. Seeding deletes all data.');
+    process.exit(1);
+  }
+}
+
 const now = new Date();
 const dt = (daysAhead, h, m = 0) => {
   const d = new Date(now);
@@ -133,7 +144,7 @@ const people = [
       for (const vi of p.vault) {
         await client.query(
           'INSERT INTO vault_items (user_id,label,username,password_enc,notes) VALUES ($1,$2,$3,$4,$5)',
-          [uid, vi.label, vi.username || '', encrypt(vi.password || ''), vi.notes || '']
+          [uid, encrypt(vi.label, uid), encrypt(vi.username || '', uid), encrypt(vi.password || '', uid), encrypt(vi.notes || '', uid)]
         );
       }
     }

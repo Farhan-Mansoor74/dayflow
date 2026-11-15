@@ -16,12 +16,13 @@ npm install
 # 2) configure environment
 cp .env.example .env
 #    edit .env -> set DATABASE_URL, and GOOGLE_CLIENT_ID (see the root README)
-npm run keygen          # prints a VAULT_KEY; paste it into .env
+npm run keygen          # prints VAULT_KEY, AUTH_SECRET, OTP_SECRET; paste them into .env
 
 # 3) create tables, then optionally load the demo data
 npm run migrate
 npm run backfill        # ONLY when upgrading a pre-accounts database (one-shot)
-npm run seed            # optional, DESTRUCTIVE: replaces all rows with demo accounts
+npm run migrate:vault   # once, after upgrading: re-encrypts older vault rows (dry run; add -- --apply)
+npm run seed            # optional, DESTRUCTIVE, local databases only: replaces all rows with demo accounts
 
 # 4) run it
 npm start               # http://localhost:3088  (health: /api/health)
@@ -34,67 +35,84 @@ npm run smoke           # in another terminal: end-to-end API check
 | ------------------ | -------------------------------------------------------------------- |
 | `DATABASE_URL`     | Postgres connection string (or use the `PG*` vars instead).          |
 | `GOOGLE_CLIENT_ID` | **Required.** OAuth 2.0 Web-application client ID. No secret needed. |
-| `VAULT_KEY`        | 64 hex chars (32 bytes). Encrypts vault passwords and face data.     |
-| `AUTH_SECRET`      | Signs session + step-up tokens. Falls back to `VAULT_KEY`.           |
-| `SESSION_DAYS`     | Session lifetime in days, default 30.                                |
-| `STEPUP_TOKEN_MIN` | Vault step-up lifetime in minutes, default 30.                       |
+| `VAULT_KEY`        | **Required.** 64 hex chars. Master key for vault and face data.      |
+| `AUTH_SECRET`      | **Required.** ≥ 32 chars, distinct. Signs vault step-up tokens.      |
+| `OTP_SECRET`       | **Required.** ≥ 32 chars, distinct. Hashes emailed unlock codes.     |
+| `ALLOWED_EMAILS`   | Comma-separated addresses allowed to create a NEW account. Existing accounts can always sign in; unset means no new sign-ups. |
+| `PG_CA`            | Database CA certificate (PEM, `
+` escapes allowed). Turns on full certificate verification. |
+| `SESSION_DAYS`     | Session lifetime in days, default 7, renewed while in use.           |
+| `STEPUP_TOKEN_MIN` | Vault step-up lifetime in minutes, default 10.                       |
 | `PORT`             | API port (default `3088`).                                           |
-| `CORS_ORIGINS`     | Comma-separated frontend origins allowed to call the API.            |
+| `CORS_ORIGINS`     | Comma-separated frontend origins allowed to call the API with cookies. Unset = same origin only. |
+
+The server refuses to start unless `VAULT_KEY`, `AUTH_SECRET` and `OTP_SECRET`
+are set and all different.
 
 ## API
 
-Base path: `/api`. Everything except the five public endpoints requires
-`Authorization: Bearer <session token>`, and acts **only on the caller's own
-rows** — another account's id in a path is a 404, never a successful read or
-write.
+Base path: `/api`. Everything except the public endpoints requires the session
+cookie, and acts **only on the caller's own rows** — another account's id in a
+path is a 404, never a successful read or write. Every non-GET request must
+also send `X-Dayflow: 1` (CSRF defence); the cron and QStash endpoints are
+exempt and use `X-Cron-Key` instead (header only, never a query parameter).
 
 | Method       | Path                  | Notes                                                      |
 | ------------ | --------------------- | ---------------------------------------------------------- |
 | GET          | `/health`             | public: status + db/vault/auth readiness                   |
 | GET          | `/config`             | public: `{ googleClientId }` for the sign-in button        |
-| POST         | `/auth/google`        | public: `{ credential }` → `{ token, expiresAt, user }`    |
+| POST         | `/auth/google`        | public: `{ credential }` → `{ user }` + session cookie     |
+| POST         | `/auth/logout`        | ends this session                                          |
+| POST         | `/auth/logout-all`    | ends every session of the account                          |
 | GET/POST     | `/cron/run`           | public, `CRON_SECRET`: deliver due reminders               |
 | POST         | `/reminders/:id/fire` | public, `CRON_SECRET`: QStash callback for one reminder    |
 | GET          | `/bootstrap`          | user + categories + tasks + reminders + expenses, one trip |
 | GET          | `/me`                 | the signed-in account                                      |
 | PATCH        | `/me`                 | `{ name?, color?, cycleStartDay? }`                        |
-| DELETE       | `/me`                 | deletes the account and every row it owns                  |
+| DELETE       | `/me`                 | deletes the account and every row it owns; needs step-up   |
 | GET/POST     | `/tasks`              | `{ title, type, time?, days?, completed? }`                |
 | PATCH/DELETE | `/tasks/:id`          |                                                            |
 | POST         | `/tasks/reorder`      | `{ ids: [...] }` new order                                 |
-| GET/POST     | `/reminders`          | `{ title, datetime, method, email? }`                      |
+| GET/POST     | `/reminders`          | `{ title, datetime, method }`; email goes to the account   |
 | PATCH/DELETE | `/reminders/:id`      |                                                            |
 | GET/POST     | `/expenses`           | `{ title, amount, type, category?, date, note? }`          |
 | PATCH/DELETE | `/expenses/:id`       |                                                            |
 | GET/POST     | `/categories`         | `{ label, color, parentKey? }` — two levels deep           |
 | PATCH        | `/categories/:key`    | label/colour only; `key` and `parent_key` are immutable    |
+| POST         | `/categories/reorder` | `{ keys: [...] }` new order of top-level categories        |
 | DELETE       | `/categories/:key`    | reassigns its own and its children's expenses to `other`   |
 | GET/POST     | `/vault`              | needs `VAULT_KEY` **and** `X-StepUp-Token`                 |
 | PATCH/DELETE | `/vault/:id`          | same                                                       |
 | POST/DELETE  | `/me/face`            | enroll/remove `{ descriptor: number[128] }`; needs step-up |
-| POST         | `/me/face/match`      | `{ descriptor }` vs your own face → `{ stepUpToken }`      |
+| POST         | `/me/face/match`      | `{ descriptor }` → `{ matched, stepUpToken? }`; 5 per 15 min |
 | POST         | `/me/otp/request`     | email a 6-digit step-up code (rate-limited)                |
 | POST         | `/me/otp/verify`      | `{ code }` → `{ verified, stepUpToken }`                   |
 
 ### Two-tier authentication
 
-**Session token** — issued by `POST /auth/google` once `google-auth-library` has
-verified the ID token's signature, issuer, audience and expiry. The payload is
-`{ uid, exp }`, HMAC-signed; the browser keeps it in `localStorage`. An account
-is matched on `google_sub`, then on a Google-**verified** email whose
-`google_sub IS NULL` (this is how a backfilled profile is claimed), and
-otherwise created fresh with a starter set of categories.
+**Session** — started by `POST /auth/google` once `google-auth-library` has
+verified the ID token's signature, issuer, audience and expiry. The browser gets
+a random 256-bit token in an `HttpOnly`, `SameSite=Strict` cookie
+(`__Host-dayflow_sid` over HTTPS); only its SHA-256 hash is stored, in
+`sessions`. Deleting the row ends the session (sign out, sign out everywhere,
+account deletion). An account is matched on `google_sub`, then on a
+Google-**verified** email whose `google_sub IS NULL` (this is how a backfilled
+profile is claimed), and otherwise created fresh, only for `ALLOWED_EMAILS`.
 
 **Step-up token** — issued only by a successful face match or emailed code,
-scoped to one user, valid `STEPUP_TOKEN_MIN` minutes, sent as `X-StepUp-Token`.
+scoped to one user and one session, valid `STEPUP_TOKEN_MIN` minutes, sent as `X-StepUp-Token`.
 Required by every vault route *and* by face enroll/remove — otherwise a
 signed-in session could quietly enroll a new face and walk into the vault with
 it. The client holds it in memory only, so closing the tab re-locks the vault.
 
-Face descriptors are encrypted at rest (AES-256-GCM, `VAULT_KEY`) and matched
-server-side against that user's own descriptor only. OTP codes are HMAC-hashed,
-5-minute expiry, single-use, 5-attempt lockout, with a per-user request limit.
-Reminders without their own email fall back to the account email.
+Vault fields (label, username, password, notes) and face descriptors are
+encrypted at rest with AES-256-GCM under a per-user key derived from
+`VAULT_KEY` (HKDF). Face descriptors are matched server-side against that user's
+own descriptor only; the response says matched or not, never how close. OTP
+codes are HMAC-hashed, 5-minute expiry, single-use, 5-attempt lockout counted
+atomically, with per-user request limits. Rate-limit counters live in Postgres
+(`rate_limits`) so every serverless instance shares them. Email reminders always
+go to the account's own address, at most 50 per day.
 
 ### Expense categories
 

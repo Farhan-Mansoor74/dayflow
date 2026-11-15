@@ -1,13 +1,13 @@
 const express = require('express');
 const { pool, query } = require('./db');
-const rateLimit = require('express-rate-limit');
-const { encrypt, decrypt, vaultEnabled } = require('./crypto');
+const { limiter } = require('./ratelimit');
+const { encrypt, decrypt, decryptField, vaultEnabled } = require('./crypto');
 const { saveSubscription, deleteSubscription, pushEnabled } = require('./push');
 const { THRESHOLD, encodeDescriptor, decodeDescriptor, distance } = require('./face');
 const { TTL_MS, MAX_ATTEMPTS, generateCode, hashCode, safeEqual, maskEmail, emailCode } = require('./otp');
 const {
-  googleClientId, googleEnabled, verifyGoogleCredential,
-  issueToken, requireAuth, issueStepUpToken, verifyStepUpToken,
+  googleClientId, googleEnabled, verifyGoogleCredential, signupAllowed,
+  startSession, endSession, endAllSessions, requireAuth, issueStepUpToken, verifyStepUpToken,
 } = require('./auth');
 const { seedCategories } = require('./defaults');
 const { tick, dispatchOne } = require('./scheduler');
@@ -24,34 +24,30 @@ const userOut = (r) => ({
 
 // Brute-force protection on sign-in. Google does the real work of validating
 // the credential; this just stops the endpoint being used as a grinder.
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many sign-in attempts — try again later.' },
-});
+const FIFTEEN_MIN = 15 * 60 * 1000;
+const authLimiter = limiter({ name: 'signin', windowMs: FIFTEEN_MIN, limit: 20, message: 'Too many sign-in attempts — try again later.' });
+
+// Per-user ceiling on all signed-in traffic.
+const userLimiter = limiter({ name: 'user', windowMs: FIFTEEN_MIN, limit: 2000, byUser: true, message: 'Rate limit exceeded.' });
 
 // Per-user limit on requesting vault step-up codes (brute-force / spam protection).
-const otpRequestLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 5,
-  keyGenerator: (req) => 'otp:' + (req.userId || req.ip),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many code requests — try again later.' },
-});
+const otpRequestLimiter = limiter({ name: 'otp', windowMs: FIFTEEN_MIN, limit: 5, byUser: true, message: 'Too many code requests — try again later.' });
 
 // Cap code-verification attempts per user (defence-in-depth on top of the
 // per-code MAX_ATTEMPTS counter, which resets whenever a new code is requested).
-const otpVerifyLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 20,
-  keyGenerator: (req) => 'otpv:' + (req.userId || req.ip),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many attempts — try again later.' },
-});
+const otpVerifyLimiter = limiter({ name: 'otpv', windowMs: FIFTEEN_MIN, limit: 20, byUser: true, message: 'Too many attempts — try again later.' });
+
+// Face unlock can be fooled by a photo, so it gets few tries before the emailed
+// code becomes the only way in for a while.
+const faceLimiter = limiter({ name: 'face', windowMs: FIFTEEN_MIN, limit: 5, byUser: true, message: 'Too many face attempts — use an emailed code instead.' });
+
+// Per-user caps on stored items, so one account can't fill the database.
+const CAPS = { tasks: 500, reminders: 1000, expenses: 20000, vault_items: 500 };
+const EMAIL_REMINDERS_PER_DAY = 50;
+async function checkCap(table, userId) {
+  const { rows: [{ n }] } = await query(`SELECT count(*)::int AS n FROM ${table} WHERE user_id = $1`, [userId]);
+  if (n >= CAPS[table]) throw new v.HttpError(409, `limit reached: at most ${CAPS[table]} items`);
+}
 const v = require('./validate');
 
 const router = express.Router();
@@ -161,7 +157,10 @@ router.post('/auth/google', authLimiter, h(async (req, res) => {
         ));
         user = rows[0];
       } else {
-        // 3. Brand new account.
+        // 3. Brand new account — only for allow-listed addresses.
+        if (!signupAllowed(claims.email)) {
+          throw new v.HttpError(403, 'this app is private — ask the owner to add your email address');
+        }
         ({ rows } = await client.query(
           'INSERT INTO users (google_sub, email, name, picture) VALUES ($1,$2,$3,$4) RETURNING *',
           [claims.sub, claims.email, claims.name, claims.picture]
@@ -178,8 +177,15 @@ router.post('/auth/google', authLimiter, h(async (req, res) => {
     client.release();
   }
 
-  const { token, expiresAt } = issueToken(user.id);
-  res.json({ token, expiresAt, user: userOut(user) });
+  await startSession(req, res, user.id);
+  res.json({ user: userOut(user) });
+}));
+
+// Sign out this device: the session row is deleted, so the cookie is dead even
+// if a copy of it exists somewhere.
+router.post('/auth/logout', h(async (req, res) => {
+  await endSession(req, res);
+  res.status(204).end();
 }));
 
 // ===========================================================================
@@ -188,7 +194,8 @@ router.post('/auth/google', authLimiter, h(async (req, res) => {
 // ===========================================================================
 const cronAuthed = (req) => {
   const secret = process.env.CRON_SECRET || '';
-  const provided = (req.get('x-cron-key') || (req.query && req.query.key) || '').toString();
+  // Header only: a secret in the URL ends up in access logs and cron history.
+  const provided = (req.get('x-cron-key') || '').toString();
   return !!secret && safeEqual(provided, secret);
 };
 
@@ -225,16 +232,23 @@ router.post('/reminders/:id/fire', h(async (req, res) => {
 // ---- Everything past here is gated by a valid session token ----------------
 // requireAuth sets req.userId; no handler below may read an id from the URL
 // without also constraining the query to that user.
-router.use(requireAuth);
+router.use(requireAuth, userLimiter);
 
 // Vault access ALWAYS requires its own step-up (face scan or emailed code) on
 // top of being signed in, and the step-up token lives only in the browser's
-// memory — so closing the tab re-locks the vault.
+// memory — so closing the tab re-locks the vault. It is bound to the session,
+// so signing out voids it too.
 const requireStepUp = h(async (req, res, next) => {
   const token = (req.get('x-stepup-token') || '').toString();
-  if (verifyStepUpToken(token, req.userId)) return next();
+  if (verifyStepUpToken(token, req.userId, req.sessionId)) return next();
   return res.status(403).json({ error: 'vault locked — unlock required' });
 });
+
+// Sign out every device, this one included.
+router.post('/auth/logout-all', h(async (req, res) => {
+  await endAllSessions(req, res, req.userId);
+  res.status(204).end();
+}));
 
 // ===========================================================================
 // The signed-in user
@@ -260,9 +274,12 @@ router.patch('/me', h(async (req, res) => {
   return rows[0] ? res.json(userOut(rows[0])) : notFound(res, 'account');
 }));
 
-router.delete('/me', h(async (req, res) => {
-  // Cascades to tasks, reminders, expenses, vault_items, categories, push subs.
+// Irreversible, so it needs the same step-up as the vault: a stolen session
+// alone can't wipe the account.
+router.delete('/me', requireStepUp, h(async (req, res) => {
+  // Cascades to tasks, reminders, expenses, vault_items, categories, push subs, sessions.
   await query('DELETE FROM users WHERE id = $1', [req.userId]);
+  await endSession(req, res);
   res.status(204).end();
 }));
 
@@ -304,6 +321,7 @@ function childRoutes({ base, table, validate, listOrder, out = (r) => r, beforeW
   }));
 
   router.post(`/${base}`, h(async (req, res) => {
+    await checkCap(table, req.userId);
     let body = validate(req.body);
     if (beforeWrite) body = await beforeWrite(body, req);
     let row = await insert(table, { user_id: req.userId, ...body });
@@ -336,6 +354,28 @@ childRoutes({
   listOrder: 'datetime',
   // qstash_id is internal bookkeeping; the client has no use for it.
   out: ({ qstash_id, ...r }) => r, // eslint-disable-line no-unused-vars
+  // Email reminders only ever go to the account's own address (the scheduler
+  // ignores the column), and at most EMAIL_REMINDERS_PER_DAY may fall on one day.
+  async beforeWrite(body, req) {
+    let { method, datetime } = body;
+    if (req.params.id && (method === undefined || datetime === undefined)) {
+      const cur = await getOwned('reminders', req.params.id, req.userId);
+      if (!cur) return body; // the update then 404s
+      method = method === undefined ? cur.method : method;
+      datetime = datetime === undefined ? cur.datetime : datetime;
+    }
+    if (method !== 'email') return body;
+    const { rows: [{ n }] } = await query(
+      `SELECT count(*)::int AS n FROM reminders
+        WHERE user_id = $1 AND method = 'email' AND id IS DISTINCT FROM $2
+          AND datetime >= date_trunc('day', $3::timestamptz) AND datetime < date_trunc('day', $3::timestamptz) + interval '1 day'`,
+      [req.userId, req.params.id || null, datetime]
+    );
+    if (n >= EMAIL_REMINDERS_PER_DAY) {
+      throw new v.HttpError(429, `at most ${EMAIL_REMINDERS_PER_DAY} email reminders per day`);
+    }
+    return body;
+  },
   // Any write can change when (or whether) the reminder should fire, so cancel
   // the pending callback and schedule a fresh one. Scheduling failures return
   // null and are non-fatal — the cron tick remains the backstop.
@@ -367,7 +407,7 @@ childRoutes({
 // Reorder tasks: body { ids: [...] } in the desired order.
 router.post('/tasks/reorder', h(async (req, res) => {
   const ids = req.body && req.body.ids;
-  if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) {
+  if (!Array.isArray(ids) || ids.length > CAPS.tasks || ids.some((x) => typeof x !== 'string' || x.length > 64)) {
     return res.status(400).json({ error: 'ids must be an array of task id strings' });
   }
   const client = await pool.connect();
@@ -659,14 +699,23 @@ const requireVault = (req, res, next) => {
   next();
 };
 
+// Every field is encrypted with the owner's key (label, username and notes too:
+// which sites you use and your notes are as sensitive as the password).
+// decryptField still reads rows written before that, until they're migrated.
 const vaultOut = (row) => ({
   id: row.id,
-  label: row.label,
-  username: row.username,
-  password: decrypt(row.password_enc),
-  notes: row.notes,
+  label: decryptField(row.label, row.user_id),
+  username: decryptField(row.username, row.user_id),
+  password: decrypt(row.password_enc, row.user_id),
+  notes: decryptField(row.notes, row.user_id),
   created_at: row.created_at,
 });
+
+const encryptVaultColumns = (columns, userId) => {
+  const out = {};
+  for (const [k, val] of Object.entries(columns)) out[k] = encrypt(val, userId);
+  return out;
+};
 
 router.get('/vault', requireVault, requireStepUp, h(async (req, res) => {
   const { rows } = await query(
@@ -676,21 +725,20 @@ router.get('/vault', requireVault, requireStepUp, h(async (req, res) => {
 }));
 
 router.post('/vault', requireVault, requireStepUp, h(async (req, res) => {
+  await checkCap('vault_items', req.userId);
   const { columns, password } = v.vaultBody(req.body);
   const row = await insert('vault_items', {
     user_id: req.userId,
-    label: columns.label,
-    username: columns.username || '',
-    notes: columns.notes || '',
-    password_enc: encrypt(password || ''),
+    ...encryptVaultColumns({ label: columns.label, username: columns.username || '', notes: columns.notes || '' }, req.userId),
+    password_enc: encrypt(password || '', req.userId),
   });
   res.status(201).json(vaultOut(row));
 }));
 
 router.patch('/vault/:id', requireVault, requireStepUp, h(async (req, res) => {
   const { columns, password } = v.vaultBody(req.body, true);
-  const patch = { ...columns };
-  if (password !== undefined) patch.password_enc = encrypt(password);
+  const patch = encryptVaultColumns(columns, req.userId);
+  if (password !== undefined) patch.password_enc = encrypt(password, req.userId);
   const row = await updateOwned('vault_items', req.params.id, req.userId, patch);
   return row ? res.json(vaultOut(row)) : notFound(res, 'vault item');
 }));
@@ -709,9 +757,13 @@ router.get('/push/public-key', (_req, res) => {
 
 router.post('/push/subscribe', h(async (req, res) => {
   if (!pushEnabled()) return res.status(503).json({ error: 'push not configured (set VAPID keys)' });
-  const sub = req.body && req.body.subscription;
-  if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
-    return res.status(400).json({ error: 'invalid push subscription' });
+  const sub = v.pushSubscription(req.body && req.body.subscription);
+  if ((await query('SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id = $1', [req.userId])).rows[0].n >= 20) {
+    // Drop the oldest device rather than refuse the newest.
+    await query(
+      'DELETE FROM push_subscriptions WHERE id = (SELECT id FROM push_subscriptions WHERE user_id = $1 ORDER BY created_at LIMIT 1)',
+      [req.userId]
+    );
   }
   await saveSubscription(req.userId, sub);
   res.status(201).json({ ok: true });
@@ -719,7 +771,7 @@ router.post('/push/subscribe', h(async (req, res) => {
 
 router.post('/push/unsubscribe', h(async (req, res) => {
   const endpoint = req.body && req.body.endpoint;
-  if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+  if (typeof endpoint !== 'string' || !endpoint || endpoint.length > 1000) return res.status(400).json({ error: 'endpoint required' });
   await deleteSubscription(req.userId, endpoint);
   res.status(204).end();
 }));
@@ -733,7 +785,7 @@ router.post('/push/unsubscribe', h(async (req, res) => {
 // file yet, the emailed code is the way in.
 router.post('/me/face', requireStepUp, h(async (req, res) => {
   if (!vaultEnabled()) return res.status(503).json({ error: 'face storage needs VAULT_KEY' });
-  const enc = encodeDescriptor(req.body && req.body.descriptor); // throws 400 if invalid
+  const enc = encodeDescriptor(req.body && req.body.descriptor, req.userId); // throws 400 if invalid
   const { rows } = await query('UPDATE users SET face_descriptor = $1 WHERE id = $2 RETURNING *', [enc, req.userId]);
   return rows[0] ? res.json(userOut(rows[0])) : notFound(res, 'account');
 }));
@@ -744,22 +796,23 @@ router.delete('/me/face', requireStepUp, h(async (req, res) => {
 }));
 
 // Compare a live descriptor against THIS user's enrolled face only — a match
-// mints the step-up token the vault routes require.
-router.post('/me/face/match', h(async (req, res) => {
+// mints the step-up token the vault routes require. Only matched / not matched
+// comes back: returning the distance would let a caller tune a fake descriptor
+// step by step until it matched. faceLimiter allows 5 tries per 15 minutes.
+router.post('/me/face/match', faceLimiter, h(async (req, res) => {
   if (!vaultEnabled()) return res.status(503).json({ error: 'face matching needs VAULT_KEY' });
   const desc = req.body && req.body.descriptor;
-  if (!Array.isArray(desc) || desc.length !== 128) {
+  if (!Array.isArray(desc) || desc.length !== 128 || !desc.every((n) => typeof n === 'number' && Number.isFinite(n))) {
     return res.status(400).json({ error: 'descriptor must be an array of 128 numbers' });
   }
   const { rows } = await query('SELECT face_descriptor FROM users WHERE id = $1', [req.userId]);
-  const stored = rows[0] && decodeDescriptor(rows[0].face_descriptor);
+  const stored = rows[0] && decodeDescriptor(rows[0].face_descriptor, req.userId);
   if (!stored) return res.status(400).json({ error: 'no face enrolled — use an emailed code' });
-  const d = distance(desc, stored);
-  if (d <= THRESHOLD) {
-    const { token: stepUpToken, expiresAt } = issueStepUpToken(req.userId);
-    return res.json({ matched: true, distance: Number(d.toFixed(4)), stepUpToken, expiresAt });
+  if (distance(desc, stored) <= THRESHOLD) {
+    const { token: stepUpToken, expiresAt } = issueStepUpToken(req.userId, req.sessionId);
+    return res.json({ matched: true, stepUpToken, expiresAt });
   }
-  res.json({ matched: false, distance: Number(d.toFixed(4)) });
+  res.json({ matched: false });
 }));
 
 // ===========================================================================
@@ -790,26 +843,32 @@ router.post('/me/otp/request', otpRequestLimiter, h(async (req, res) => {
 router.post('/me/otp/verify', otpVerifyLimiter, h(async (req, res) => {
   const code = ((req.body && req.body.code) || '').toString().trim();
   if (!/^\d{4,8}$/.test(code)) return res.status(400).json({ error: 'invalid code format' });
-  const { rows } = await query(
-    'SELECT id, otp_hash, otp_expires_at, otp_attempts FROM users WHERE id = $1', [req.userId]
+  // Claim an attempt BEFORE comparing, in one statement. Parallel guesses each
+  // take their own attempt, so no more than MAX_ATTEMPTS can ever be checked.
+  const { rows: [claimed] } = await query(
+    `UPDATE users SET otp_attempts = otp_attempts + 1
+      WHERE id = $1 AND otp_hash IS NOT NULL AND otp_expires_at > now() AND otp_attempts < $2
+      RETURNING otp_hash`,
+    [req.userId, MAX_ATTEMPTS]
   );
-  const u = rows[0];
-  if (!u) return notFound(res, 'account');
-  if (!u.otp_hash || !u.otp_expires_at) return res.status(400).json({ error: 'no active code — request one first' });
-  if (new Date(u.otp_expires_at).getTime() < Date.now()) {
-    await query('UPDATE users SET otp_hash = NULL WHERE id = $1', [u.id]);
+  if (!claimed) {
+    const { rows: [u] } = await query('SELECT otp_hash, otp_expires_at, otp_attempts FROM users WHERE id = $1', [req.userId]);
+    if (!u) return notFound(res, 'account');
+    if (!u.otp_hash) return res.status(400).json({ error: 'no active code — request one first' });
+    await query('UPDATE users SET otp_hash = NULL WHERE id = $1', [req.userId]);
+    if (u.otp_attempts >= MAX_ATTEMPTS) return res.status(429).json({ error: 'too many attempts — request a new code' });
     return res.status(400).json({ error: 'code expired — request a new one' });
   }
-  if (u.otp_attempts >= MAX_ATTEMPTS) {
-    await query('UPDATE users SET otp_hash = NULL WHERE id = $1', [u.id]);
-    return res.status(429).json({ error: 'too many attempts — request a new code' });
-  }
-  if (safeEqual(hashCode(code), u.otp_hash)) {
-    await query('UPDATE users SET otp_hash = NULL, otp_expires_at = NULL, otp_attempts = 0 WHERE id = $1', [u.id]);
-    const { token: stepUpToken, expiresAt } = issueStepUpToken(u.id);
+  if (safeEqual(hashCode(code), claimed.otp_hash)) {
+    // Consume the code; only one request can win this, so a code works once.
+    const { rowCount } = await query(
+      'UPDATE users SET otp_hash = NULL, otp_expires_at = NULL, otp_attempts = 0 WHERE id = $1 AND otp_hash = $2',
+      [req.userId, claimed.otp_hash]
+    );
+    if (!rowCount) return res.status(400).json({ error: 'code already used — request a new one' });
+    const { token: stepUpToken, expiresAt } = issueStepUpToken(req.userId, req.sessionId);
     return res.json({ verified: true, stepUpToken, expiresAt });
   }
-  await query('UPDATE users SET otp_attempts = otp_attempts + 1 WHERE id = $1', [u.id]);
   res.status(401).json({ verified: false, error: 'incorrect code' });
 }));
 

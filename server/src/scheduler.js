@@ -11,14 +11,15 @@ const SELECT_DUE = `SELECT r.*, u.name AS user_name, u.email AS user_email
 async function deliver(r) {
   if (r.method === 'email') {
     await sendMail({
-      to: r.email || r.user_email,
+      // Always the account's own (Google-verified) address; reminders.email is ignored.
+      to: r.user_email,
       subject: 'Reminder: ' + r.title,
       text: `Hi ${r.user_name},\n\nThis is your Dayflow reminder: ${r.title}\n\nDue: ${new Date(r.datetime).toLocaleString()}\n`,
       html: `<p>Hi ${escapeHtml(r.user_name)},</p><p>This is your Dayflow reminder:</p>`
         + `<p style="font-size:18px;font-weight:700">${escapeHtml(r.title)}</p>`
         + `<p style="color:#666">Due: ${new Date(r.datetime).toLocaleString()}</p>`,
     });
-    console.log('[scheduler] emailed reminder', r.id, '->', r.email || r.user_email);
+    console.log('[scheduler] emailed reminder', r.id);
   } else {
     const n = await sendToUser(r.user_id, {
       title: 'Dayflow reminder',

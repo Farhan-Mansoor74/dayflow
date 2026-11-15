@@ -121,6 +121,24 @@ CREATE TABLE IF NOT EXISTS vault_items (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
+-- Sign-in sessions. The browser holds a random token in an HttpOnly cookie;
+-- only its SHA-256 hash is stored here. Deleting a row signs that device out.
+CREATE TABLE IF NOT EXISTS sessions (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash  text        NOT NULL UNIQUE,
+  expires_at  timestamptz NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- Rate-limit counters shared by every server instance (see src/ratelimit.js).
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key       text        PRIMARY KEY,
+  hits      integer     NOT NULL,
+  reset_at  timestamptz NOT NULL
+);
+
 -- ---------------------------------------------------------------------------
 -- Upgrade path for databases created under the old household schema.
 --

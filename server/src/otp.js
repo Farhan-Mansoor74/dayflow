@@ -8,11 +8,10 @@ function generateCode() {
   return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 }
 
-// HMAC so the plaintext code is never stored. Secret reuses VAULT_KEY (already
-// required + secret) unless a dedicated OTP_SECRET is set.
+// HMAC so the plaintext code is never stored. OTP_SECRET is required at startup
+// (config.js); there is deliberately no fallback.
 function hashCode(code) {
-  const secret = process.env.OTP_SECRET || process.env.VAULT_KEY || 'dayflow-otp';
-  return crypto.createHmac('sha256', secret).update(String(code)).digest('hex');
+  return crypto.createHmac('sha256', process.env.OTP_SECRET).update(String(code)).digest('hex');
 }
 
 function safeEqual(a, b) {
