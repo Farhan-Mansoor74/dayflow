@@ -455,6 +455,29 @@ router.post('/categories', h(async (req, res) => {
   res.status(201).json(row);
 }));
 
+// Reorder top-level categories: body { keys: [...] } in the desired order.
+// Built-in ones (Other) keep their pinned position; sub-categories are untouched.
+router.post('/categories/reorder', h(async (req, res) => {
+  const keys = req.body && req.body.keys;
+  if (!Array.isArray(keys) || keys.length > CATEGORY_LIMIT
+    || keys.some((k) => typeof k !== 'string' || !k || k.length > 64)) {
+    return res.status(400).json({ error: 'keys must be an array of category keys' });
+  }
+  await withTx(async (db) => {
+    for (let i = 0; i < keys.length; i++) {
+      await db.query(
+        'UPDATE categories SET position = $1 WHERE user_id = $2 AND key = $3 AND parent_key IS NULL AND builtin = false',
+        [i, req.userId, keys[i]]
+      );
+    }
+  });
+  const { rows } = await query(
+    'SELECT * FROM categories WHERE user_id = $1 ORDER BY position, created_at',
+    [req.userId]
+  );
+  res.json(rows);
+}));
+
 // Rename / recolour, and move a sub-category under a different top-level
 // parent. `key` never changes, so expenses stay attached; moving a
 // sub-category takes its expenses along, since the parent is derived.
